@@ -23,8 +23,26 @@ from .tools import validate_params
 LABELS = {
     "nmap.discovery": "Discover hosts on {network}",
     "nmap.services": "Scan services on {ip}",
+    "nmap.vuln": "Vuln scan (NSE) on {ip}",
+    "smb.enum": "Enumerate SMB on {ip}",
+    "web.scan": "Scan web service {ip}:{port}",
+    "wired.listen": "Listen for hosts (passive)",
     "kismet.scan": "Scan Wi-Fi",
+    "wifi.watch": "Watch AP {bssid} (ch {channel})",
+    "wifi.capture": "Capture handshake on {bssid} (passive)",
+    "wifi.capture_deauth": "Capture handshake on {bssid} (with deauth)",
+    "wifi.deauth": "Deauth on {bssid}",
+    "ble.scan": "Scan BLE",
+    "ble.gatt": "Enumerate GATT services on {addr}",
+    "sdr.survey": "Spectrum survey",
+    "sdr.decode": "Decode IoT ({freq})",
+    "subghz.scan": "Scan sub-GHz",
+    "subghz.replay": "Replay {id} at {freq_mhz} MHz",
+    "marauder.scan": "Scan Wi-Fi (ESP)",
+    "marauder.deauth": "Deauth (ESP) on {bssid}",
 }
+# Label suffixes for optional params that change what the action does.
+LABEL_SUFFIX = {"client": " → client {client}"}
 
 
 class TaskError(ValueError):
@@ -70,6 +88,11 @@ def make_task(registry: dict, tool: str, target, mode: str, result_id: str,
     sk = step_kind(spec.name, tgt)
     try:
         label = LABELS.get(spec.name, spec.name).format(**tgt)
+        for key, fmt in LABEL_SUFFIX.items():
+            if key in tgt:
+                label += fmt.format(**tgt)
+        if spec.name in ("wifi.deauth", "marauder.deauth") and "client" not in tgt:
+            label += " (broadcast)"
     except (KeyError, IndexError):
         label = spec.name
     return {"id": new_id(), "category": spec.category, "tool": spec.name, "target": tgt,

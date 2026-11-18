@@ -28,7 +28,7 @@ import time
 from .config import MODES, BoxConfig
 from .store import new_id
 
-SPACES = ("wired", "wifi")
+SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "esp")
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +138,13 @@ class Handlers:
             return 400, {"status": "error", "reason": f"unknown space: {space!r}"}
         if mode not in MODES:
             return 400, {"status": "error", "reason": f"unknown mode: {mode!r}"}
-        prep = self.api.prepare_scan(space, mode)        # task + mode built HERE, not in the job
+        action = body.get("action")
+        if action is not None and not (isinstance(action, str) and action.isalpha() and len(action) <= 16):
+            return 400, {"status": "error", "reason": "bad action"}
+        try:
+            prep = self.api.prepare_scan(space, mode, action)   # task + mode built HERE, not in the job
+        except ValueError as exc:
+            return 400, {"status": "error", "reason": str(exc)}
         if prep["status"] == "unavailable":
             return 409, prep
         if prep["status"] == "refused":
@@ -146,7 +152,7 @@ class Handlers:
         if prep["status"] == "needs_approval":
             return 200, prep
         task = prep["task"]
-        job = self.jobs.submit(f"Scan {space} [{mode}]", lambda: self.api.execute_scan(task),
+        job = self.jobs.submit(f"{task['label']} [{mode}]", lambda: self.api.execute_scan(task),
                                lane=space)
         return 202, {"status": "queued", "job_id": job["id"]}
 

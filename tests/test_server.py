@@ -67,7 +67,9 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(self.h.state()[1]["findings"][0]["mode"], "standard")
 
     def test_bad_inputs_rejected(self):
-        self.assertEqual(self.h.scan({"space": "ble"})[0], 400)
+        self.assertEqual(self.h.scan({"space": "zigbee"})[0], 400)
+        self.assertEqual(self.h.scan({"space": "wifi", "action": "nuke"})[0], 400)
+        self.assertEqual(self.h.scan({"space": "wifi", "action": "a b"})[0], 400)
         self.assertEqual(self.h.scan({"space": "wired", "mode": "loud"})[0], 400)
         self.assertEqual(self.h.scan(None)[0], 400)
         self.assertEqual(self.h.mode({"mode": "yolo"})[0], 400)
@@ -147,10 +149,24 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(len(ev), 1)
         self.assertIn(p["command"], ev[0]["detail"])
 
-    def test_unregistered_tool_is_never_proposed(self):
+    def test_wifi_survey_proposes_passive_watch_not_deauth(self):
         self.h.scan({"space": "wifi"}); drain(self.h)
         st = self.h.state()[1]
-        self.assertFalse(any(p["category"] == "wifi.deauth" for p in st["proposals"]))
+        tools = {p["tool"] for p in st["proposals"]}
+        self.assertEqual(tools, {"wifi.watch"})
+        twin = [p for p in st["proposals"] if p["target"]["bssid"] == "11:22:33:44:55:77"][0]
+        self.assertTrue(twin["suggested"])            # evil twin: watch it (passive)
+        self.assertFalse(twin["needs_approval"])
+
+    def test_planner_step_with_unregistered_tool_is_skipped(self):
+        from havokbox import planner
+        orig = planner.plan
+        planner.plan = lambda f, **kw: [{"tool": "not.a.tool", "target": {}}]
+        try:
+            self.h.scan({"space": "wifi"}); drain(self.h)
+        finally:
+            planner.plan = orig
+        self.assertEqual(self.h.state()[1]["proposals"], [])
         self.assertTrue(any(e["kind"] == "skipped" for e in self.store.evidence()))
 
     def test_labels_are_code_generated(self):
@@ -174,12 +190,26 @@ class FlowTest(unittest.TestCase):
 
 
 class ScanGateTest(unittest.TestCase):
-    def test_stealth_wired_refuses_instead_of_sweeping(self):
+    def test_stealth_wired_listens_passively_never_nmap(self):
         h, store, runner, *_ = make()
         code, r = h.scan({"space": "wired", "mode": "stealth"})
-        self.assertEqual((code, r["status"]), (409, "unavailable"))
-        self.assertEqual(h.jobs.pending(), 0)
-        self.assertEqual(runner.cmds, [])
+        self.assertEqual((code, r["status"]), (202, "queued"))
+        drain(h)
+        self.assertTrue(runner.cmds)
+        self.assertTrue(all("nmap" not in c for c in runner.cmds))
+        self.assertIn("tcpdump", runner.cmds[0])
+        store.close()
+
+    def test_cards_only_for_registered_tools(self):
+        h, store, *_ = make()
+        spaces = {c["space"] for c in h.state()[1]["cards"]}
+        self.assertTrue({"wired", "wifi"} <= spaces)
+        for c in h.state()[1]["cards"]:
+            for a in c["actions"]:
+                from havokbox.api import CARDS, _card_tool
+                card = next(x for x in CARDS if x["space"] == c["space"])
+                act = next(x for x in card["actions"] if x["action"] == a["action"])
+                self.assertIn(_card_tool(act, "stealth"), h.api.registry)
         store.close()
 
     def test_discovery_needing_approval_becomes_approvable_proposal(self):

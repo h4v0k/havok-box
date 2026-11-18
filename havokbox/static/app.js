@@ -62,11 +62,19 @@ function fmtTarget(t) {
 
 function renderMode() {
   for (const b of $$(".mode button")) b.setAttribute("aria-checked", String(b.dataset.mode === state.mode));
-  const stealth = state.mode === "stealth";
-  $("[data-hint=wired]").textContent = stealth
-    ? "Stealth host discovery (passive listen) isn't built yet. Switch to Standard to sweep."
-    : "Standard: nmap -sn sweep of in-scope networks (excluded hosts skipped).";
-  $("[data-scan=wired]").dataset.stealthOff = stealth ? "1" : "";
+}
+
+// Recon cards come from the box: only signal spaces with a registered tool get a button.
+function renderCards() {
+  const busy = new Set(state.running.map((j) => j.lane));
+  $("#cards").replaceChildren(...state.cards.map((c) => el("article", { class: "card" },
+    el("h3", { text: c.title }),
+    el("p", { class: "sub", text: c.sub }),
+    c.actions.map((a) => [
+      el("button", { type: "button", class: "btn primary big scan", disabled: busy.has(c.space),
+        onclick: (e) => startScan(e.currentTarget, c.space, a.action) }, a.label),
+      el("p", { class: "hint", text: busy.has(c.space) ? "Running…" : a.hint }),
+    ]))));
 }
 
 function renderPhase() {
@@ -104,11 +112,33 @@ function findingDetails(f) {
       text: `${ap.ssid || "(hidden)"} — ${ap.bssid} ch ${ap.channel ?? "?"}${twins.has(ap.bssid) ? "  EVIL TWIN" : ""}`,
     }));
   }
+  if (!items.length) items.push(...genericItems(d));
   if (!items.length) return null;
   const det = el("details", { open: openDetails.has(f.result_id) },
     el("summary", { text: "Details" }), el("ul", {}, items));
   det.addEventListener("toggle", () => det.open ? openDetails.add(f.result_id) : openDetails.delete(f.result_id));
   return det;
+}
+
+// Any tool's data: arrays become lists, anomalies first and flagged. Values shown as text only.
+const ALERT_KEYS = new Set(["anomalies", "evil_twins", "findings"]);
+function fmtItem(v) {
+  if (v === null || typeof v !== "object") return String(v);
+  return Object.entries(v).filter(([, x]) => x !== null && x !== "" && typeof x !== "object")
+    .map(([k, x]) => `${k}: ${x}`).join(" · ").slice(0, 300);
+}
+function genericItems(d) {
+  const out = [];
+  const keys = Object.keys(d).sort((a, b) => ALERT_KEYS.has(b) - ALERT_KEYS.has(a));
+  for (const k of keys) {
+    const v = d[k];
+    if (Array.isArray(v)) {
+      for (const x of v.slice(0, 64)) out.push(el("li", { class: ALERT_KEYS.has(k) ? "alert" : null, text: `${k}: ${fmtItem(x)}` }));
+    } else if (v !== null && typeof v !== "object" && v !== "") {
+      out.push(el("li", { text: `${k}: ${v}` }));
+    }
+  }
+  return out;
 }
 
 function stepButton(p) {
@@ -135,11 +165,16 @@ function renderFindings() {
   for (const p of state.proposals) (byResult[p.result_id] ||= []).push(p);
   box.replaceChildren(...(waitBox ? [waitBox] : []), ...fs.map((f) => {
     const twins = (f.data && f.data.evil_twins || []).length;
+    const anomalies = (f.data && (f.data.anomalies || []).length) || 0;
+    const vulns = f.kind === "vulns" && (f.data.findings || []).length;
     const steps = (byResult[f.result_id] || []).sort((a, b) => b.suggested - a.suggested);
     return el("article", { class: "finding" },
       el("header", {},
         el("span", { class: "sum", text: f.summary }),
         twins ? el("span", { class: "tag alert", text: "Evil twin" }) : null,
+        anomalies ? el("span", { class: "tag alert", text: "Anomaly" }) : null,
+        vulns ? el("span", { class: "tag alert", text: "Vulnerable" }) : null,
+        f.kind === "capture" && f.data.handshake ? el("span", { class: "tag", text: "Handshake captured" }) : null,
         el("span", { class: "tag", text: f.space }),
         el("span", { class: "tag", text: f.mode })),
       el("time", { class: "hint", text: fmtTime(f.created) }),
@@ -168,10 +203,8 @@ function renderEvidence() {
 }
 
 function render() {
-  renderMode(); renderPhase(); renderStatus(); renderFindings(); renderLists(); renderEvidence();
+  renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence();
   $("[data-tab=console]").hidden = !state.console_enabled;
-  const busyLanes = new Set(state.running.map((j) => j.lane));
-  for (const b of $$("[data-scan]")) b.disabled = busyLanes.has(b.dataset.scan) || b.dataset.stealthOff === "1";
 }
 
 async function refresh() {
@@ -186,10 +219,10 @@ async function refresh() {
 for (const b of $$(".mode button")) b.addEventListener("click", async () => {
   await call("POST", "/api/mode", { mode: b.dataset.mode }); refresh();
 });
-for (const b of $$("[data-scan]")) b.addEventListener("click", async () => {
+async function startScan(b, space, action) {
   b.disabled = true;
   try {
-    const r = await call("POST", "/api/scan", { space: b.dataset.scan, mode: state.mode });
+    const r = await call("POST", "/api/scan", { space, action, mode: state.mode });
     if (r.status === "needs_approval") {
       await refresh();
       const p = state.proposals.find((x) => x.task_id === r.task_id);
@@ -198,7 +231,7 @@ for (const b of $$("[data-scan]")) b.addEventListener("click", async () => {
     }
   } catch (e) { $("#status").textContent = "Scan failed: " + e.message; }
   refresh();
-});
+}
 
 async function runPassive(p) {
   try { await call("POST", "/api/run", { task_id: p.task_id }); } catch (e) { $("#status").textContent = e.message; }

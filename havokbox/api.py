@@ -16,7 +16,39 @@ from .preview import argv_for, command_for
 from .scope import Gate
 from .tasks import TaskError, make_task, task_digest
 
-TEST_CATS = ("wifi.deauth", "wifi.inject", "rf.replay", "rf.transmit", "auth.attempt", "exploit.tool")
+TEST_CATS = ("wifi.deauth", "wifi.inject", "wifi.capture", "rf.replay", "rf.transmit",
+             "auth.attempt", "exploit.tool")
+
+# Recon card buttons: (space, action) -> tool per mode. Only shown when the tool is registered.
+CARDS = [
+    {"space": "wired", "title": "Wired / IP", "sub": "Pi NIC on the lab network", "actions": [
+        {"action": "discover", "label": "Discover hosts",
+         "tool": {"stealth": "wired.listen", "standard": "nmap.discovery"},
+         "hint": {"stealth": "Stealth: passive listen to ARP / DHCP / mDNS. Sends nothing.",
+                  "standard": "Standard: nmap -sn sweep of in-scope networks (excluded hosts skipped)."}}]},
+    {"space": "wifi", "title": "Wi-Fi", "sub": "Alfa · Kismet", "actions": [
+        {"action": "scan", "label": "Scan Wi-Fi", "tool": "kismet.scan",
+         "hint": "Passive listen. Flags rogue APs and evil twins."}]},
+    {"space": "ble", "title": "BLE", "sub": "SONOFF · Sniffle", "actions": [
+        {"action": "scan", "label": "Scan BLE", "tool": "ble.scan",
+         "hint": "Passive advertising sniff."}]},
+    {"space": "subghz", "title": "Sub-GHz", "sub": "Flipper Zero", "actions": [
+        {"action": "scan", "label": "Scan sub-GHz", "tool": "subghz.scan",
+         "hint": "Listens on 433.92 MHz and lists saved captures."}]},
+    {"space": "sdr", "title": "Wideband RX", "sub": "RTL-SDR", "actions": [
+        {"action": "survey", "label": "Spectrum survey", "tool": "sdr.survey",
+         "hint": "rtl_power sweep, strongest signals."},
+        {"action": "decode", "label": "Decode IoT (433)", "tool": "sdr.decode",
+         "hint": "rtl_433 on 433.92 MHz."}]},
+    {"space": "esp", "title": "ESP Wi-Fi", "sub": "Marauder board", "actions": [
+        {"action": "scan", "label": "Scan (ESP)", "tool": "marauder.scan",
+         "hint": "Second radio; passive AP scan."}]},
+]
+
+
+def _card_tool(action: dict, mode: str) -> str:
+    t = action["tool"]
+    return t[mode] if isinstance(t, dict) else t
 DIGEST_MAX = 64
 
 
@@ -60,24 +92,39 @@ class Api:
         self.mode = mode
         self.store.log("mode", f"mode set to {mode}")
 
-    def prepare_scan(self, space: str, mode: str | None = None) -> dict:
+    def cards(self) -> list[dict]:
+        """Recon cards for the UI — only buttons whose tool is registered (no dead buttons)."""
+        out = []
+        for c in CARDS:
+            acts = []
+            for a in c["actions"]:
+                tool = _card_tool(a, self.mode)
+                if tool in self.registry:
+                    hint = a["hint"][self.mode] if isinstance(a["hint"], dict) else a["hint"]
+                    acts.append({"action": a["action"], "label": a["label"], "hint": hint})
+            if acts:
+                out.append({"space": c["space"], "title": c["title"], "sub": c["sub"],
+                            "actions": acts})
+        return out
+
+    def prepare_scan(self, space: str, mode: str | None = None, action: str | None = None) -> dict:
         """Build the scan task in the request (design-check #3). Returns {status, task?}."""
         mode = mode or self.mode
         if mode not in MODES:
             raise ValueError(f"unknown mode: {mode}")
-        if space == "wired":
-            if mode == "stealth":
-                # Stealth discovery is a passive listener (bettercap/arpwatch) not built yet.
-                # Refuse rather than run an active sweep and record it as "stealth".
-                return {"status": "unavailable",
-                        "reason": "passive host listen not built yet; switch to Standard to sweep"}
-            tool, target = "nmap.discovery", {"network": str(self.scope.include[0])}
-        elif space == "wifi":
-            tool, target = "kismet.scan", {}
-        else:
+        card = next((c for c in CARDS if c["space"] == space), None)
+        if card is None:
             raise ValueError(f"unknown space: {space}")
-        task = make_task(self.registry, tool, target, mode, f"scan:{space}", suggested=True,
-                         source="scan")
+        act = next((a for a in card["actions"] if a["action"] == (action or card["actions"][0]["action"])), None)
+        if act is None:
+            raise ValueError(f"unknown action: {action}")
+        tool = _card_tool(act, mode)
+        target = {"network": str(self.scope.include[0])} if tool == "nmap.discovery" else {}
+        try:
+            task = make_task(self.registry, tool, target, mode, f"scan:{space}", suggested=True,
+                             source="scan")
+        except TaskError as exc:
+            return {"status": "unavailable", "reason": str(exc)}
         decision = self.gate.evaluate(task)
         if not decision.allowed:
             self.store.log("refused", f"scan {space}: {decision.reason}")
@@ -95,8 +142,8 @@ class Api:
             self._plan_from(res["result_id"])
         return res
 
-    def scan(self, space: str, mode: str | None = None) -> dict:
-        prep = self.prepare_scan(space, mode)
+    def scan(self, space: str, mode: str | None = None, action: str | None = None) -> dict:
+        prep = self.prepare_scan(space, mode, action)
         return self.execute_scan(prep["task"]) if prep["status"] == "ready" else prep
 
     # ---- proposal lifecycle ----------------------------------------------
@@ -107,7 +154,7 @@ class Api:
         finding = dict(rows[0])
         finding["data"] = json.loads(finding["data"])
         mode = finding.get("mode") or self.mode
-        for raw in planner.plan([finding]):
+        for raw in planner.plan([finding], scope=self.scope, mode=mode):
             try:
                 task = make_task(self.registry, raw["tool"], raw.get("target"), mode, result_id,
                                  suggested=raw.get("suggested", False), source="planner")
@@ -205,7 +252,7 @@ class Api:
                 "gate_reason": decision.reason,
                 "source": t.get("source", "planner"),
             })
-        return {"mode": self.mode, "phase": self._phase(findings, proposals),
+        return {"mode": self.mode, "phase": self._phase(findings, proposals), "cards": self.cards(),
                 "findings": findings, "proposals": proposals,
                 "evidence": self.store.evidence_recent(evidence_limit),
                 "commander_pending": bool(self.store.pending_queue())}
