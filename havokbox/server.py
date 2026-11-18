@@ -28,7 +28,7 @@ import time
 from .config import MODES, BoxConfig
 from .store import new_id
 
-SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "esp")
+SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "sdr2", "esp")
 WARDRIVE_LANES = ("wifi", "ble", "esp", "sdr", "subghz")
 
 
@@ -46,21 +46,28 @@ class Jobs:
         self.lanes: dict[str, collections.deque] = {}
         self.recent = collections.deque(maxlen=history)
         self.running: dict[str, dict] = {}
-        self.held: set[str] = set()      # lanes owned by a wardrive session
+        self.held: dict[str, str] = {}   # lane -> owner (wardrive, survey, ...)
         self._cv = threading.Condition()
 
-    def hold(self, lanes) -> bool:
-        """Take lanes for wardrive. False if any has a job running or queued (design #1)."""
+    def hold(self, lanes, owner: str = "wardrive") -> bool:
+        """Take lanes for an owner. False if any lane is busy, queued or held by anyone
+        (Phase 6 #16: a survey must never share or release wardrive's radios)."""
         with self._cv:
             lanes = set(lanes)
+            if any(ln in self.held for ln in lanes):
+                return False
             if any(ln in self.running for ln in lanes) or any(self.lanes.get(ln) for ln in lanes):
                 return False
-            self.held |= lanes
+            for ln in lanes:
+                self.held[ln] = owner
             return True
 
-    def release(self, lanes) -> None:
+    def release(self, lanes, owner: str = "wardrive") -> None:
+        """Free only the lanes this owner holds."""
         with self._cv:
-            self.held -= set(lanes)
+            for ln in set(lanes):
+                if self.held.get(ln) == owner:
+                    del self.held[ln]
             self._cv.notify_all()
 
     def submit(self, label: str, fn, lane: str = "default") -> dict:
@@ -137,6 +144,13 @@ class Jobs:
 # Handlers — all the server logic, HTTP-free
 # ---------------------------------------------------------------------------
 class Handlers:
+    def lane_for(self, space: str) -> str:
+        """sdr2 is its own lane only with a second dongle; otherwise it IS the main SDR
+        (one dongle can't be opened twice; wardrive/survey holds then apply)."""
+        if space == "sdr2" and not (self.cfg.hardware().get("sdr2_serial") or ""):
+            return "sdr"
+        return space
+
     def __init__(self, api, cfg: BoxConfig, jobs: Jobs, publisher=None):
         self.api = api
         self.cfg = cfg
@@ -208,7 +222,7 @@ class Handlers:
         task = prep["task"]
         try:
             job = self.jobs.submit(f"{task['label']} [{mode}]", lambda: self.api.execute_scan(task),
-                                   lane=space)
+                                   lane=self.lane_for(space))
         except LaneHeld:
             return 409, {"status": "error", "reason": "wardrive running: this radio is in use"}
         return 202, {"status": "queued", "job_id": job["id"]}
@@ -243,7 +257,7 @@ class Handlers:
         if self.api.needs_approval(t) and not self.api.approval_ok(tid):
             return 409, {"status": "error", "reason": "approve first"}   # nothing queued
         spec = self.api.registry.get(t.get("tool"))
-        lane = getattr(spec, "space", "") or "default"
+        lane = self.lane_for(getattr(spec, "space", "") or "default")
         try:
             job = self.jobs.submit(t.get("label") or tid[:8], lambda: self.api.run(tid), lane=lane)
         except LaneHeld:
@@ -301,7 +315,12 @@ class Handlers:
         sid = session or wd.sid or (sessions[0]["id"] if sessions else None)
         out = {"enabled": True, "running": wd.running(), "session": sid, "sessions": sessions,
                "fix": wd.gps.fix() if wd.running() else None,
-               "live_distance_m": wd.live_distance_m(), "notes": list(wd.notes)[:10]}
+               "live_distance_m": wd.live_distance_m(), "notes": list(wd.notes)[:10],
+               "rayhunter": getattr(self, "rayhunter", None),
+               "exposure": wd.last_exposure,
+               "drones": [{k: v for k, v in dr.items() if k not in ("op_lat", "op_lon")}
+                          | {"operator_known": dr.get("op_lat") is not None}
+                          for dr in (wd.drones.drones(time.time()) if wd.drones else [])][:50]}
         if sid:
             track = db.query("SELECT ts, lat, lon, degraded FROM track WHERE session_id=? ORDER BY ts", (sid,))
             step = max(1, len(track) // 500)
@@ -357,6 +376,91 @@ class Handlers:
         name = f"havokbox-{s['id']}." + ("csv" if fmt == "wigle" else "kml")
         return 200, (data, name, "text/csv" if fmt == "wigle" else "application/vnd.google-earth.kml+xml")
 
+    # ---- baseline drift ------------------------------------------------------
+    def baseline_learn(self) -> tuple[int, dict]:
+        return 200, {"status": "ok", "items": self.api.baseline_learn()}
+
+    def baseline_accept(self, body) -> tuple[int, dict]:
+        space = self._str(body, "space", 16)
+        key = self._str(body, "key", 80)
+        if not space or not key:
+            return 400, {"status": "error", "reason": "space and key required"}
+        ok = self.api.baseline_accept(space, key)
+        return (200, {"status": "ok"}) if ok else (404, {"status": "not_found"})
+
+    def baseline_forget(self) -> tuple[int, dict]:
+        self.api.baseline_forget()
+        return 200, {"status": "ok"}
+
+    # ---- Wi-Fi site survey (indoor grid-tap, Phase 6 #16) ---------------------
+    def survey_start(self, body) -> tuple[int, dict]:
+        sv = getattr(self, "survey", None)
+        if sv is None:
+            return 404, {"status": "disabled"}
+        from .survey import SurveyError
+        b = body or {}
+        name = b.get("name") or "survey"
+        bssids = b.get("bssids")
+        if not isinstance(name, str) or not isinstance(bssids, list) or \
+                not all(isinstance(x, str) for x in bssids):
+            return 400, {"status": "error", "reason": "name and bssids[] required"}
+        try:
+            sid = sv.start(name[:60], bssids, int(b.get("grid_w", 12)), int(b.get("grid_h", 12)))
+        except (ValueError, TypeError) as exc:
+            return 400, {"status": "error", "reason": str(exc)}
+        except SurveyError as exc:
+            return 409, {"status": "error", "reason": str(exc)}
+        return 200, {"status": "running", "survey": sid}
+
+    def survey_measure(self, body) -> tuple[int, dict]:
+        sv = getattr(self, "survey", None)
+        if sv is None:
+            return 404, {"status": "disabled"}
+        from .survey import SurveyError
+        try:
+            res = sv.measure(int((body or {}).get("x")), int((body or {}).get("y")))
+        except (ValueError, TypeError) as exc:
+            return 400, {"status": "error", "reason": str(exc)}
+        except SurveyError as exc:
+            return 409, {"status": "error", "reason": str(exc)}
+        return 200, {"status": "ok", "result": res}
+
+    def survey_stop(self) -> tuple[int, dict]:
+        sv = getattr(self, "survey", None)
+        if sv is None:
+            return 404, {"status": "disabled"}
+        sv.stop()
+        return 200, {"status": "stopped"}
+
+    def survey_state(self, survey_id=None) -> tuple[int, dict]:
+        sv = getattr(self, "survey", None)
+        if sv is None:
+            return 200, {"enabled": False}
+        surveys = sv.list()
+        sid = survey_id or (surveys[0]["id"] if surveys else None)
+        heat = None
+        if sid:
+            try:
+                heat = sv.heatmap(sid)
+            except KeyError:
+                heat = None
+        return 200, {"enabled": True, "surveys": surveys, "survey": sid, "heatmap": heat,
+                     "bssids": sorted(self.api.scope.bssids)}
+
+    def survey_delete(self, body) -> tuple[int, dict]:
+        sv = getattr(self, "survey", None)
+        sid = self._str(body, "survey", 40)
+        if sv is None or not sid:
+            return 400, {"status": "error", "reason": "survey required"}
+        from .survey import SurveyError
+        try:
+            sv.delete(sid)
+        except KeyError:
+            return 404, {"status": "not_found"}
+        except SurveyError as exc:
+            return 409, {"status": "error", "reason": str(exc)}
+        return 200, {"status": "deleted"}
+
     # ---- Drive Guard (tablet) ------------------------------------------------
     def guard_state(self, since) -> tuple[int, dict]:
         from .wardrive.service import phrase_for
@@ -392,7 +496,8 @@ class Handlers:
             "alerts": alerts, "recent": [shape(r) for r in rows[:3]],
             "alpr_near": {"id": near["id"], "dist_m": near["dist_m"]} if near else None,
             "alpr_session": getattr(wd.alpr_warner, "passes", 0) if wd.alpr_warner else 0,
-            "offers": offers, "server_ts": time.time()}
+            "offers": offers, "server_ts": time.time(),
+            "rayhunter": (getattr(self, "rayhunter", None) or {}).get("text")}
 
     def _guard_parked(self):
         wd = self._wd()
@@ -498,7 +603,8 @@ def build(cfg: BoxConfig | None = None):
     scope = load_scope(cfg.scope_path)
     registry = default_registry()
     orch = Orchestrator(scope, store, registry, make_runner(cfg.tool_timeout_s), hw=cfg.hardware())
-    api = Api(scope, store, orch, mode=cfg.default_mode)
+    api = Api(scope, store, orch, mode=cfg.default_mode, gateway_ip=cfg.lab_gateway or None,
+              pinned_static=cfg.pinned_static)
     jobs = Jobs(store)
     commander = ApiCommander(cfg.anthropic_api_key, cfg.commander_model,
                              cfg.commander_max_calls_per_day, registry,
@@ -524,6 +630,37 @@ def build(cfg: BoxConfig | None = None):
                                  quiet_zones=cfg.guard_quiet_zones)
     h.wardrive.boot()
     h.wardrive.load_alpr()
+    # Rayhunter (fake cell tower detection), read-only poller (Phase 6 #4-#6)
+    h.rayhunter = {"status": "off", "text": "Rayhunter not configured"}
+    if cfg.rayhunter_url:
+        from .rayhunter import RayhunterClient, RayhunterPoller
+        try:
+            poller = RayhunterPoller(RayhunterClient(cfg.rayhunter_url), time.time)
+        except ValueError as exc:
+            h.rayhunter = {"status": "error", "text": f"bad rayhunter_url: {exc}"}
+            poller = None
+
+        def ray_loop():
+            while poller is not None:
+                try:
+                    res = poller.poll()
+                    h.rayhunter = {"status": res.get("status"), "text": poller.status_text(),
+                                   "version": res.get("version"), "at": time.time()}
+                    wd = h.wardrive
+                    for row in res.get("new") or []:
+                        if wd.running():
+                            sev = "high" if row.get("severity") == "high" else "medium"
+                            wd._alert("cell_suspicious", sev,
+                                      f"ray:{res.get('entry')}:{row.get('ts')}:{row.get('analyzer')}", None,
+                                      f"Rayhunter: {str(row.get('message') or '')[:160]}")
+                except Exception as exc:
+                    h.rayhunter = {"status": "unreachable", "text": f"Rayhunter unreachable ({type(exc).__name__})"}
+                time.sleep(60)
+        threading.Thread(target=ray_loop, daemon=True, name="havokbox-rayhunter").start()
+    from .survey import SurveyService
+    h.survey = SurveyService(store, cfg.db_path, jobs, scope, cfg.hardware(),
+                             runner=h.wardrive.runner)
+    h.survey.abort_running()
     try:
         h.wardrive.start_gps()      # always-on GPS speed for the touch lock (receive-only)
     except Exception as exc:
@@ -650,6 +787,46 @@ def create_app(handlers: Handlers | None = None):
     async def alpr_refresh(request):
         return reply(await run_in_threadpool(h.alpr_refresh))
 
+    async def bl_learn(request):
+        return reply(await run_in_threadpool(h.baseline_learn))
+
+    async def bl_accept(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.baseline_accept, b))
+
+    async def bl_forget(request):
+        return reply(await run_in_threadpool(h.baseline_forget))
+
+    async def sv_start(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.survey_start, b))
+
+    async def sv_measure(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.survey_measure, b))   # dwells up to 15 s
+
+    async def sv_stop(request):
+        return reply(await run_in_threadpool(h.survey_stop))
+
+    async def sv_delete(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.survey_delete, b))
+
+    async def sv_state(request):
+        return reply(await run_in_threadpool(h.survey_state, request.query_params.get("survey")))
+
+    async def sv_csv(request):
+        from starlette.responses import Response
+        sv = getattr(h, "survey", None)
+        sid = request.query_params.get("survey") or ""
+        try:
+            data = await run_in_threadpool(sv.csv, sid)
+        except (KeyError, AttributeError):
+            return JSONResponse({"status": "not_found"}, status_code=404)
+        safe = "".join(c for c in sid if c.isalnum())[:32]
+        return Response(data, media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="survey-{safe}.csv"'})
+
     async def post_publish(request):
         return reply(h.publish())
 
@@ -672,6 +849,15 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/wardrive/delete", wd_delete, methods=["POST"]),
         Route("/api/wardrive/state", wd_state),
         Route("/api/wardrive/export", wd_export),
+        Route("/api/baseline/learn", bl_learn, methods=["POST"]),
+        Route("/api/baseline/accept", bl_accept, methods=["POST"]),
+        Route("/api/baseline/forget", bl_forget, methods=["POST"]),
+        Route("/api/survey/start", sv_start, methods=["POST"]),
+        Route("/api/survey/measure", sv_measure, methods=["POST"]),
+        Route("/api/survey/stop", sv_stop, methods=["POST"]),
+        Route("/api/survey/delete", sv_delete, methods=["POST"]),
+        Route("/api/survey/state", sv_state),
+        Route("/api/survey/csv", sv_csv),
         Route("/api/guard/state", guard_state),
         Route("/api/guard/ack", guard_ack, methods=["POST"]),
         Route("/api/guard/sentry", guard_sentry, methods=["POST"]),

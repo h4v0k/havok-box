@@ -20,9 +20,11 @@ _MIC_OK = ("CRC", "CHECKSUM")
 MIN_DECODES = 2
 
 
-def window_argv(freq, seconds=50):
-    """argv for one receive window. No -R: decoder numbers are not pinned; parse filters."""
-    return ["rtl_433", "-F", "json", "-M", "level", "-T", str(int(seconds)), "-f", freq]
+def window_argv(freq, seconds=50, hw=None):
+    """argv for one receive window. No -R: decoder numbers are not pinned; parse filters.
+    The dongle is pinned by serial when configured (Phase 6 #15)."""
+    from ..tools.sdr import dev_args
+    return ["rtl_433"] + dev_args(hw) + ["-F", "json", "-M", "level", "-T", str(int(seconds)), "-f", freq]
 
 
 def next_freq(i):

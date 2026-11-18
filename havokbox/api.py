@@ -9,6 +9,7 @@ against the digest again, then consumed + executed).
 from __future__ import annotations
 
 import json
+import time
 
 from . import planner
 from .config import MODES
@@ -40,6 +41,11 @@ CARDS = [
          "hint": "rtl_power sweep, strongest signals."},
         {"action": "decode", "label": "Decode IoT (433)", "tool": "sdr.decode",
          "hint": "rtl_433 on 433.92 MHz."}]},
+    {"space": "sdr2", "title": "Air & sea", "sub": "RTL-SDR · readsb / AIS-catcher", "actions": [
+        {"action": "adsb", "label": "Aircraft (ADS-B)", "tool": "air.adsb",
+         "hint": "60 s on 1090 MHz. Emergency squawks highlighted."},
+        {"action": "ais", "label": "Ships (AIS)", "tool": "air.ais",
+         "hint": "162 MHz; needs the AIS antenna near water."}]},
     {"space": "esp", "title": "ESP Wi-Fi", "sub": "Marauder board", "actions": [
         {"action": "scan", "label": "Scan (ESP)", "tool": "marauder.scan",
          "hint": "Second radio; passive AP scan."}]},
@@ -70,12 +76,96 @@ def digest(finding: dict) -> dict:
     return out
 
 
+BASELINE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS baseline (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, space TEXT, key TEXT, label TEXT, attrs TEXT,
+    learned_at REAL, UNIQUE(space, key)
+);
+"""
+
+
 class Api:
-    def __init__(self, scope, store, orchestrator, mode: str = "stealth"):
+    def __init__(self, scope, store, orchestrator, mode: str = "stealth", gateway_ip=None,
+                 pinned_static=()):
         self.scope = scope
         self.store = store
         self.orch = orchestrator
         self.mode = mode
+        self.gateway_ip = gateway_ip
+        self.pinned_static = tuple(pinned_static or ())
+        from .baseline import DriftCache
+        self._drift_cache = DriftCache()
+        self._baseline_ready = False
+
+    # ---- baseline drift (requirement #2; the dashboard is the only writer) -----
+    def _baseline_init(self):
+        if not self._baseline_ready:
+            with self.store._lock, self.store.cx:
+                self.store.cx.executescript(BASELINE_SCHEMA)
+            self._baseline_ready = True
+
+    def baseline_rows(self) -> list[dict]:
+        self._baseline_init()
+        rows = self.store._read("SELECT * FROM baseline ORDER BY id")
+        for r in rows:
+            try:
+                r["attrs"] = json.loads(r["attrs"] or "{}")
+            except ValueError:
+                r["attrs"] = {}
+        return rows
+
+    def _findings_parsed(self):
+        out = []
+        for r in self.store.findings():
+            d = dict(r)
+            try:
+                d["data"] = json.loads(d["data"])
+            except (TypeError, ValueError):
+                d["data"] = {}
+            out.append(d)
+        return out
+
+    def baseline_learn(self) -> int:
+        """Snapshot the current lab inventory as the baseline (replaces it)."""
+        from .baseline import inventory
+        self._baseline_init()
+        inv = inventory(self._findings_parsed())
+        rows = [(space, key, attrs.get("label") or attrs.get("ssid") or key, json.dumps(attrs), time.time())
+                for space, items in inv.items() if not space.startswith("_")
+                for key, attrs in items.items()]
+        with self.store._lock, self.store.cx:
+            self.store.cx.execute("DELETE FROM baseline")
+            self.store.cx.executemany(
+                "INSERT INTO baseline(space,key,label,attrs,learned_at) VALUES(?,?,?,?,?)", rows)
+        self.store.log("baseline", f"learned {len(rows)} item(s)")
+        return len(rows)
+
+    def baseline_accept(self, space: str, key: str) -> bool:
+        from .baseline import inventory
+        self._baseline_init()
+        attrs = inventory(self._findings_parsed()).get(space, {}).get(key)
+        if attrs is None:
+            return False
+        with self.store._lock, self.store.cx:
+            self.store.cx.execute(
+                "INSERT OR REPLACE INTO baseline(space,key,label,attrs,learned_at) VALUES(?,?,?,?,?)",
+                (space, key, attrs.get("label") or attrs.get("ssid") or key, json.dumps(attrs), time.time()))
+        self.store.log("baseline", f"accepted {space}:{key}")
+        return True
+
+    def baseline_forget(self) -> None:
+        self._baseline_init()
+        with self.store._lock, self.store.cx:
+            self.store.cx.execute("DELETE FROM baseline")
+        self.store.log("baseline", "baseline cleared")
+
+    def drift(self, findings=None) -> dict:
+        rows = self.baseline_rows()
+        if not rows:
+            return {"learned": False, "items": []}
+        items = self._drift_cache.get(findings if findings is not None else self._findings_parsed(),
+                                      rows, gateway_ip=self.gateway_ip, pinned_static=self.pinned_static)
+        return {"learned": True, "learned_at": max(r["learned_at"] for r in rows), "items": items}
 
     @property
     def registry(self):
@@ -252,7 +342,12 @@ class Api:
                 "gate_reason": decision.reason,
                 "source": t.get("source", "planner"),
             })
+        try:
+            drift = self.drift(findings)
+        except Exception as exc:   # drift is advisory; never break the dashboard
+            drift = {"learned": False, "items": [], "error": str(exc)[:120]}
         return {"mode": self.mode, "phase": self._phase(findings, proposals), "cards": self.cards(),
+                "drift": drift,
                 "findings": findings, "proposals": proposals,
                 "evidence": self.store.evidence_recent(evidence_limit),
                 "commander_pending": bool(self.store.pending_queue())}

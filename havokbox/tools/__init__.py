@@ -28,7 +28,10 @@ DEFAULT_HW = {
     "marauder_port": "/dev/ttyUSB1",
     "sniffle_dir": "/opt/sniffle",
     "kismet_header": "/data/havokbox/secrets/kismet.header",  # "Cookie: KISMET=<key>", chmod 600
-    "kismet_log_dir": "/data/havokbox/kismet",   # Kismet's log_prefix (kismetdb files)  # Sniffle checkout (python_cli/sniff_receiver.py)
+    "kismet_log_dir": "/data/havokbox/kismet",   # Kismet's log_prefix (kismetdb files)
+    # RTL-SDR dongles by serial (set with rtl_eeprom -s). Empty = device 0 (single-dongle boxes).
+    "sdr_serial": "",       # main dongle: TPMS, rtl_433, rtl_power
+    "sdr2_serial": "",      # optional second dongle: ADS-B / AIS  # Sniffle checkout (python_cli/sniff_receiver.py)
     "work_dir": "/data/havokbox/work",
 }
 

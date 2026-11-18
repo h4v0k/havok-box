@@ -219,8 +219,27 @@ function renderPublish() {
   st.textContent = running ? "Publishing…" : p.pending ? `${last} A publish is waiting and will go out when the box is online.` : last;
 }
 
+function renderDrift() {
+  const d = state.drift || { learned: false, items: [] };
+  const box = $("#drift");
+  const learn = el("button", { type: "button", class: "btn" + (d.learned ? "" : " primary"), onclick: async () => {
+    if (d.learned && !confirm("Replace the baseline with what the box sees now?")) return;
+    await call("POST", "/api/baseline/learn"); refresh(); } }, d.learned ? "Re-learn baseline" : "Learn baseline from current findings");
+  if (!d.learned) { box.replaceChildren(el("p", { class: "hint", text: "Scan the lab, then learn a baseline. New hosts, APs and devices will show up here." }), learn); return; }
+  const sevRank = { high: 0, medium: 1, low: 2, info: 3 };
+  const items = (d.items || []).slice().sort((a, b) => (sevRank[a.severity] ?? 4) - (sevRank[b.severity] ?? 4));
+  box.replaceChildren(
+    ...(items.length ? items.slice(0, 40).map((it) => el("div", { class: "finding" },
+      el("header", {}, el("span", { class: "sum", text: it.label || it.key }),
+        el("span", { class: "tag" + (it.severity === "high" ? " alert" : ""), text: it.kind.replace(/_/g, " ") })),
+      it.detail ? el("p", { class: "hint", text: it.detail }) : null,
+      it.kind.startsWith("new_") ? el("button", { type: "button", class: "btn", onclick: async () => { await call("POST", "/api/baseline/accept", { space: it.space, key: it.key }); refresh(); } }, "Accept as normal") : null))
+      : [el("p", { class: "empty", text: "No changes since the baseline." })]),
+    learn);
+}
+
 function render() {
-  renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence(); renderPublish();
+  renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence(); renderPublish(); renderDrift();
   $("[data-tab=console]").hidden = !state.console_enabled;
 }
 
@@ -377,6 +396,22 @@ function renderDrive(d) {
     a.acked ? null : el("div", { class: "row" }, el("button", { type: "button", class: "btn", onclick: async () => { await call("POST", "/api/wardrive/ack", { alert_id: a.id }); refreshDrive(); } }, "Acknowledge"))))
     : [el("p", { class: "empty", text: "No alerts." })]));
   renderMap(d);
+  const ray = d.rayhunter;
+  $("#wd-ray").textContent = ray ? "Cell towers: " + ray.text : "";
+  const ex = d.exposure;
+  $("#wd-expo").replaceChildren(...(ex && ex.items && ex.items.length ? [
+    ...ex.items.map((it) => el("article", { class: "finding" },
+      el("header", {}, el("span", { class: "sum", text: it.name || it.id || it.class }),
+        el("span", { class: "tag" + (it.identifier === "static" ? " alert" : ""), text: it.identifier === "static" ? "Fixed ID" : "Rotating" }),
+        el("span", { class: "tag", text: it.radio.toUpperCase() })),
+      el("p", { text: it.advice }),
+      it.note ? el("p", { class: "hint", text: it.note }) : null)),
+    ex.rotating_ble ? el("p", { class: "hint", text: `Plus ${ex.rotating_ble} Bluetooth device(s) using rotating addresses (harder to track).` }) : null]
+    : [el("p", { class: "empty", text: "Shows after a drive of 5 km or more: what the car broadcasts that someone could use to follow it." })]));
+  $("#wd-drones").replaceChildren(...((d.drones || []).length ? d.drones.map((dr) => el("li", {},
+    el("span", { class: "k", text: "Drone" }), dr.ua_id || "unknown ID",
+    el("div", { class: "hint", text: [dr.alt != null ? `${Math.round(dr.alt)} m up` : null, dr.speed != null ? `${Math.round(dr.speed)} m/s` : null, dr.operator_known ? "operator position broadcast" : null].filter(Boolean).join(" · ") })))
+    : [el("p", { class: "empty", text: "No Remote ID broadcasts heard (BLE add-on modules only; most DJI drones use Wi-Fi)." })]));
   $("#wd-sessions").replaceChildren(...(d.sessions || []).filter((x) => x.status !== "running").map((x) => el("article", { class: "finding" },
     el("header", {}, el("span", { class: "sum", text: `${fmtTime(x.started)}${x.note ? " · " + x.note : ""}` }), el("span", { class: "tag", text: x.status })),
     el("p", { class: "hint", text: `${(x.distance_m / 1000).toFixed(1)} km` }),
@@ -404,3 +439,81 @@ setInterval(() => {
   if (token && (!$("#tab-drive").hidden || (state && state.wardrive_running))) refreshDrive();
 }, POLL_MS);
 for (const t of $$(".phases button")) t.addEventListener("click", () => { if (t.dataset.tab === "drive") refreshDrive(); });
+
+// ---- Wi-Fi site survey (indoor grid-tap) ------------------------------------
+let sv = null, svBssid = null, svBusy = false;
+function rssiColor(v) {   // -40 strong (green) .. -85 weak (red); null = unmeasured
+  if (v == null) return "";
+  const t = Math.max(0, Math.min(1, (v + 85) / 45));
+  return `hsl(${Math.round(t * 120)} 70% 38%)`;
+}
+function renderSurvey(d) {
+  sv = d;
+  const setup = $("#sv-setup"), grid = $("#sv-grid"), act = $("#sv-actions");
+  if (!d.enabled) { $("#sv-card").hidden = true; return; }
+  const running = (d.surveys || []).find((x) => x.status === "running");
+  const heat = d.heatmap;
+  act.replaceChildren();
+  if (!running && !(d.view && heat)) {
+    grid.hidden = true;
+    setup.replaceChildren(
+      ...(d.bssids.length ? d.bssids.map((b) => el("label", { class: "check" },
+        el("input", { type: "checkbox", value: b, class: "sv-b" }), b))
+        : [el("p", { class: "empty", text: "Add your AP BSSIDs to wifi.bssids in the scope file first." })]),
+      el("label", { class: "sub", for: "sv-name", text: "Name" }),
+      el("input", { id: "sv-name", class: "text", value: "Upstairs", maxlength: "60" }));
+    act.append(el("button", { type: "button", class: "btn primary big", disabled: !d.bssids.length, onclick: async () => {
+      const bssids = $$(".sv-b").filter((i) => i.checked).map((i) => i.value);
+      try { await call("POST", "/api/survey/start", { name: $("#sv-name").value || "survey", bssids }); }
+      catch (e) { $("#sv-msg").textContent = e.message; }
+      refreshSurvey();
+    } }, "Start survey"));
+  } else {
+    setup.replaceChildren();
+    const bss = heat ? heat.bssids : JSON.parse((running && running.bssids) || "[]");
+    if (!svBssid || !bss.includes(svBssid)) svBssid = bss[0];
+    if (bss.length > 1) setup.append(el("div", { class: "row" }, bss.map((b) =>
+      el("button", { type: "button", class: "btn" + (b === svBssid ? " primary" : ""), onclick: () => { svBssid = b; renderSurvey(sv); } }, b))));
+    const [w, h] = heat ? heat.grid : [running.grid_w, running.grid_h];
+    const readOnly = !running;
+    const cells = {};
+    for (const c of (heat ? heat.cells : [])) if (c.bssid === svBssid) cells[`${c.x},${c.y}`] = c.median_rssi;
+    grid.style.gridTemplateColumns = `repeat(${w}, 1fr)`;
+    grid.hidden = false;
+    const btns = [];
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const v = cells[`${x},${y}`];
+      const b = el("button", { type: "button", "aria-label": `cell ${x},${y}`, disabled: svBusy || readOnly,
+        onclick: async (e) => {
+          svBusy = true; e.currentTarget.classList.add("busy");
+          $("#sv-msg").textContent = "Measuring — hold still about 15 seconds…";
+          try { await call("POST", "/api/survey/measure", { x, y }); $("#sv-msg").textContent = "Saved. Move and tap the next spot."; }
+          catch (err) { $("#sv-msg").textContent = err.message; }
+          svBusy = false; refreshSurvey();
+        } }, v == null ? "" : String(Math.round(v)));
+      if (v != null) b.style.background = rssiColor(v);
+      btns.push(b);
+    }
+    grid.replaceChildren(...btns);
+    act.append(running
+      ? el("button", { type: "button", class: "btn danger", onclick: async () => { await call("POST", "/api/survey/stop"); refreshSurvey(); } }, "Finish survey")
+      : el("button", { type: "button", class: "btn", onclick: () => refreshSurvey() }, "Close"));
+  }
+  const weak = heat && heat.weak ? heat.weak.length : 0;
+  $("#sv-past").replaceChildren(...(d.surveys || []).filter((x) => x.status !== "running").slice(0, 5).map((x) =>
+    el("div", { class: "row" },
+      el("span", { class: "sub", text: `${x.name} · ${x.status}` }),
+      el("button", { type: "button", class: "btn", onclick: async () => {
+        const r = await fetch(`/api/survey/csv?survey=${encodeURIComponent(x.id)}`, { headers: { Authorization: "Bearer " + token } });
+        if (!r.ok) return;
+        const a = el("a", { href: URL.createObjectURL(await r.blob()), download: `survey-${x.id}.csv` });
+        document.body.append(a); a.click(); a.remove();
+      } }, "CSV"),
+      el("button", { type: "button", class: "btn", onclick: async () => renderSurvey({ ...(await call("GET", `/api/survey/state?survey=${encodeURIComponent(x.id)}`)), view: true }) }, "View"))));
+  if (running && weak) $("#sv-msg").textContent ||= "Red cells are weak spots (below -70 dBm).";
+}
+async function refreshSurvey() {
+  try { renderSurvey(await call("GET", "/api/survey/state")); } catch (e) { /* main poll reports */ }
+}
+for (const t of $$(".phases button")) t.addEventListener("click", () => { if (t.dataset.tab === "recon") refreshSurvey(); });
+if (token) refreshSurvey();

@@ -47,6 +47,9 @@ CREATE TABLE IF NOT EXISTS wardrive_mine (
 CREATE TABLE IF NOT EXISTS mine_candidates (
     radio TEXT, dev_key TEXT, session_id TEXT, PRIMARY KEY(radio, dev_key, session_id)
 );
+CREATE TABLE IF NOT EXISTS exposure_reports (
+    session_id TEXT PRIMARY KEY, created REAL, report_json TEXT
+);
 CREATE TABLE IF NOT EXISTS rf_floor (
     session_id TEXT, ts REAL, band TEXT, median_db REAL, lat REAL, lon REAL
 );
@@ -54,7 +57,7 @@ CREATE TABLE IF NOT EXISTS rf_floor (
 
 CELL_CAP = 300_000
 BATCH = 500
-CHILD_TABLES = ("device_cells", "track", "alerts", "rf_floor")
+CHILD_TABLES = ("device_cells", "track", "alerts", "rf_floor", "exposure_reports")
 
 
 def load_key(path: str) -> bytes:
@@ -198,6 +201,16 @@ class WardriveDB:
             "SELECT c.radio, c.dev_key, COUNT(*) AS sessions FROM mine_candidates c "
             "LEFT JOIN wardrive_mine m ON m.radio=c.radio AND m.dev_key=c.dev_key "
             "WHERE m.dev_key IS NULL GROUP BY c.radio, c.dev_key HAVING COUNT(*) >= ?", (min_sessions,))
+
+    def save_exposure(self, sid: str, report: dict):
+        import json as _json
+        self._write(lambda cx: cx.execute("INSERT OR REPLACE INTO exposure_reports VALUES(?,?,?)",
+                                          (sid, time.time(), _json.dumps(report))))
+
+    def candidate_sessions(self, radio: str, dev_key: str) -> int:
+        r = self.store._read("SELECT COUNT(*) AS n FROM mine_candidates WHERE radio=? AND dev_key=?",
+                             (radio, dev_key))
+        return r[0]["n"] if r else 0
 
     def ack(self, alert_id: int):   # dashboard is the only writer of alert_acks
         self._write(lambda cx: cx.execute("INSERT OR REPLACE INTO alert_acks VALUES(?,?)",

@@ -27,6 +27,26 @@ class BleHelperTest(unittest.TestCase):
         self.assertEqual(d[0]["name"], "Tag One")
         self.assertEqual(d[0]["seen"], 2)
 
+    def test_service_data_field(self):
+        long = "ab" * 100
+        row = "aa:bb:cc:dd:ee:09\t\t-50\t\t\t\t\t\tfaff0d01,0102\n"
+        row2 = "aa:bb:cc:dd:ee:09\t\t-55\t\t\t\t\t\t" + long + "\n"
+        d = ble_scan.parse_tshark_fields(row + row2)[0]
+        self.assertEqual(d["service_data"][:2], ["faff0d01", "0102"])
+        self.assertEqual(len(d["service_data"][2]), 128)
+        self.assertEqual(ble_scan.parse_tshark_fields(TSHARK)[0]["service_data"], [])
+
+    def test_service_data_last_in_argv(self):
+        calls = []
+
+        def runner(argv, timeout):
+            calls.append(argv)
+            return ""
+        with tempfile.TemporaryDirectory() as w:
+            ble_scan.scan("/opt/sniffle", "/dev/ttyUSB0", 5, w, runner=runner)
+        self.assertEqual(calls[1][-1], "btcommon.eir_ad.entry.service_data")
+        self.assertEqual(calls[1][-3], "btle.advertising_header.randomized_tx")
+
     def test_cap_64(self):
         txt = "".join(f"aa:bb:cc:dd:{i // 256:02x}:{i % 256:02x}\tn\t-50\n" for i in range(100))
         self.assertEqual(len(ble_scan.parse_tshark_fields(txt)), 64)

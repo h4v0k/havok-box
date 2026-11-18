@@ -130,6 +130,8 @@ class WardriveService:
         self.alpr_near = None              # {"id","dist_m","mono"}
         self.quiet_zones = [z for z in quiet_zones if isinstance(z, dict)]
         self._recent_pts = collections.deque(maxlen=60)
+        self.last_exposure = None          # latest drive's exposure card (RAM, with plaintext)
+        self.drones = None                 # remoteid.DroneTracker, set when available
         self._speed_hist = collections.deque(maxlen=120)   # (mono, speed or None)
         self._reset_guard()
 
@@ -144,6 +146,8 @@ class WardriveService:
         self._tpms_heard: dict = collections.defaultdict(collections.Counter)  # key -> freq -> n
         self._last_floor = None
         self._sdr_i = 0
+        # exposure accumulator (Phase 6 #1-#3): radio -> windows while moving + devices heard
+        self._expo = {r: {"windows": 0, "devs": {}} for r in ("wifi", "ble", "tpms")}
 
     # ---- lifecycle ---------------------------------------------------------
     def _sample(self) -> None:
@@ -239,6 +243,33 @@ class WardriveService:
         for t in self._threads:
             t.start()
 
+    def _ble_hook(self, devices, fix, ts):
+        """Drone Remote ID from BLE legacy advertising (Phase 6 #7-#10). Operator location stays
+        in the tracker (RAM, 10-min TTL); alerts carry distance only, never coordinates of the pilot."""
+        from . import remoteid
+        if self.drones is None:
+            self.drones = remoteid.DroneTracker()
+        for d in devices:
+            msgs = [m for m in (remoteid.parse_service_data(h) for h in (d.get("service_data") or [])) if m]
+            if not msgs or not d.get("addr"):
+                continue
+            addr = d["addr"].lower()
+            self.drones.update(addr, msgs, ts)
+            key = self.db.dev_key("ble", "drone", addr)
+            if fix.get("lat") is None:
+                continue
+            dwell = self.drones.near_for(addr, fix["lat"], fix["lon"], ts)
+            if dwell and dwell >= 300:
+                self.plain[key] = addr
+                self._alert("drone", "medium", key, addr,
+                            f"A drone has stayed within 300 m for {int(dwell // 60)} min")
+
+    def _safe_exposure(self):
+        try:
+            self.build_exposure()
+        except Exception as exc:
+            self._note(f"exposure report: {exc}")
+
     def _halt_collectors(self):
         """Stop collector threads and their process groups, but keep lanes + passive-only."""
         self._stop.set()
@@ -264,6 +295,7 @@ class WardriveService:
             if not self._halt_collectors():
                 raise WardriveError("a collector is still stopping; try again in a moment")
             self._record_own_tpms()
+            self._safe_exposure()
             self.db.end_session(self.sid, "switched", self.track.distance_m if self.track else 0, self.wall())
             sid = self.db.start_session(note, self.wall(), mode=mode)
             self.sid, self.mode, self.started_mono = sid, mode, self.mono()
@@ -281,6 +313,8 @@ class WardriveService:
             if self.sid is None or (sid is not None and sid != self.sid):
                 return   # e.g. a late cap-stop must not end a newer session
             self._record_own_tpms()
+            if status == "stopped":
+                self._safe_exposure()          # aborted/capped/failed drives get no report
             self._stop.set()
             if self.reader and not getattr(self, "_persistent_reader", False):
                 self.reader.stop()
@@ -395,7 +429,9 @@ class WardriveService:
         key = self.db.dev_key(radio, kind, dev_id)
         if tclass:
             self.kinds[key] = tclass
-        self.plain[key] = dev_id.lower()
+        # RAM only, capped; cleared at stop except for devices that raised an alert (Phase 6 #2)
+        if key in self.plain or len(self.plain) < 5000:
+            self.plain[key] = dev_id.lower()
         if self._early():
             self.present_at_start.add(key)
         return {"radio": radio, "dev_key": key, "ts": ts, "rssi": rssi, "lat": lat, "lon": lon,
@@ -460,6 +496,9 @@ class WardriveService:
             obs.append(self._obs("wifi", d.get("kind"), d["dev_id"], d.get("rssi"), fix.get("lat"),
                                  fix.get("lon"), self._now(fix), name=d.get("name")))
         self._store_obs(obs)
+        if obs:
+            self._expo_window("wifi", [{"dev_key": o["dev_key"], "plain": self.plain.get(o["dev_key"]),
+                                        "name": o.get("name"), "kind": o.get("kind")} for o in obs])
         for a in kismet_poll.parse_alerts(self.runner(kismet_poll.alerts_argv(self.hw), 15)):
             dev = a.get("dev_id")
             self._alert(a["kind"], a.get("severity", "medium"), dev, dev, a.get("detail"), fix)
@@ -475,9 +514,16 @@ class WardriveService:
             devices = []
         fix = self.gps.fix()
         ts = self._now(fix)
-        self._store_obs([self._obs("ble", None, d["addr"], d.get("rssi"), fix.get("lat"), fix.get("lon"),
-                                   ts, tclass=trackers.classify(d))
-                         for d in devices if d.get("addr")])
+        obs = [self._obs("ble", None, d["addr"], d.get("rssi"), fix.get("lat"), fix.get("lon"),
+                         ts, tclass=trackers.classify(d)) for d in devices if d.get("addr")]
+        self._store_obs(obs)
+        if devices:
+            by_addr = {d["addr"].lower(): d for d in devices if d.get("addr")}
+            self._expo_window("ble", [{"dev_key": o["dev_key"], "plain": self.plain.get(o["dev_key"]),
+                                       "name": (by_addr.get(self.plain.get(o["dev_key"]) or "") or {}).get("name"),
+                                       "random": (by_addr.get(self.plain.get(o["dev_key"]) or "") or {}).get("random"),
+                                       "kind": o.get("kind")} for o in obs])
+        self._ble_hook(devices, fix, ts)
         if not devices:
             self._stop.wait(5)   # no dongle / no output: don't spin
 
@@ -486,9 +532,86 @@ class WardriveService:
         for band in rf_floor.BANDS:
             if self._stop.is_set():
                 return
-            m = rf_floor.parse_medians(self.runner(rf_floor.sweep_argv(band), 30))
+            m = rf_floor.parse_medians(self.runner(rf_floor.sweep_argv(band, hw=self.hw), 30))
             if m.get("median_db") is not None:
                 self.db.add_rf(self.sid, self._now(fix), band, m["median_db"], fix.get("lat"), fix.get("lon"))
+
+    # ---- exposure report (how trackable am I) ------------------------------------
+    EXPO_MIN_WINDOWS = 30
+    EXPO_MIN_SPEED = 5.0       # m/s: drops the home AP, parked cars and red lights
+    EXPO_CAP = 2000
+
+    def _moving(self) -> bool:
+        return ((self.gps.fix().get("speed") or 0) > self.EXPO_MIN_SPEED)
+
+    def _expo_window(self, radio: str, devices: list[dict]) -> None:
+        """One completed window while moving: count it and every device heard in it."""
+        if self.mode != "drive" or not self._moving():
+            return
+        acc = self._expo[radio]
+        acc["windows"] += 1
+        for d in devices:
+            key = d["dev_key"]
+            e = acc["devs"].get(key)
+            if e is None:
+                if len(acc["devs"]) >= self.EXPO_CAP:
+                    continue
+                e = acc["devs"][key] = {"n": 0, "plain": d.get("plain"), "name": d.get("name"),
+                                        "random": bool(d.get("random")), "kind": d.get("kind")}
+            e["n"] += 1
+            if d.get("name") and not e.get("name"):
+                e["name"] = d["name"]
+
+    @staticmethod
+    def _advice(radio, kind, random_addr, name) -> str:
+        if radio == "tpms":
+            return ("Tire sensors broadcast fixed IDs and can't be turned off. That's normal; "
+                    "it's why the box watches for other cars' sensors following you.")
+        if radio == "wifi" and kind == "ap":
+            return (f"Hotspot {name or ''} broadcasts a fixed ID everywhere you drive. Turn it off "
+                    "when you don't need it, or rename it so it doesn't identify the car.").replace("  ", " ")
+        if radio == "wifi":
+            return "A Wi-Fi device in the car probes with a fixed address. Check its MAC randomisation setting."
+        if random_addr:
+            return "Bluetooth device using rotating addresses — harder to track."
+        return "Bluetooth device with a fixed public address — check what it is and whether it needs to advertise."
+
+    def build_exposure(self) -> dict | None:
+        """At the end of a drive >= 5 km. Live card keeps plaintext (RAM); stored copy keeps it
+        only for devices marked yours (Phase 6 #3)."""
+        if self.mode != "drive" or not self.sid or not self.track or self.track.distance_m < 5000:
+            return None
+        mine = {k for (_, k) in self.db.mine_keys()}
+        live, stored, rotating = [], [], 0
+        for radio, acc in self._expo.items():
+            w = acc["windows"]
+            if w < self.EXPO_MIN_WINDOWS:
+                continue
+            for key, e in acc["devs"].items():
+                if e["n"] / w < 0.8:
+                    continue
+                if radio == "ble" and e["random"]:
+                    rotating += 1          # can't be "yours" by id: count only
+                    continue
+                self.db.add_candidate(radio, key, self.sid)
+                drives = self.db.candidate_sessions(radio, key)
+                static = not (radio == "ble" and e["random"])
+                entry = {"radio": radio, "class": e.get("kind") or radio,
+                         "identifier": "static" if static else "rotating", "dev_key": key,
+                         "drives": drives, "yours": key in mine,
+                         "advice": self._advice(radio, e.get("kind"), e["random"], e.get("name"))}
+                live.append({**entry, "id": e.get("plain"), "name": e.get("name"),
+                             "note": None if key in mine else
+                             ("rode along in 2+ drives — mark as yours" if drives >= 2
+                              else "may be a passenger's")})
+                stored.append({**entry, **({"id": e.get("plain"), "name": e.get("name")} if key in mine else {}),
+                               "label": "yours" if key in mine else "not marked as yours"})
+        report = {"session": self.sid, "distance_m": self.track.distance_m,
+                  "windows": {r: a["windows"] for r, a in self._expo.items()},
+                  "rotating_ble": rotating, "items": stored}
+        self.db.save_exposure(self.sid, report)
+        self.last_exposure = {**report, "items": live}     # RAM only: latest drive
+        return self.last_exposure
 
     # ---- SDR owner (Guard #11): one thread, TPMS windows + a floor sweep every 10 min ----
     def _tpms_window(self, seconds: int = 50) -> list:
@@ -496,7 +619,7 @@ class WardriveService:
         freq = tpms.FREQS[self._sdr_i % len(tpms.FREQS)]
         self._sdr_i += 1
         self._last_freq = freq
-        return tpms.parse_window(self.runner(tpms.window_argv(freq, seconds), seconds + 15))
+        return tpms.parse_window(self.runner(tpms.window_argv(freq, seconds, self.hw), seconds + 15))
 
     def _store_tpms(self, recs) -> None:
         fix = self.gps.fix()
@@ -510,6 +633,8 @@ class WardriveService:
             self._tpms_heard[o["dev_key"]][freq] += 1
             obs.append(o)
         self._store_obs(obs)
+        self._expo_window("tpms", [{"dev_key": o["dev_key"], "plain": self.plain.get(o["dev_key"]),
+                                    "kind": "tpms"} for o in obs])
 
     def tick_sdr(self) -> None:
         if self._last_floor is None or self.mono() - self._last_floor >= 600:
@@ -671,6 +796,8 @@ class WardriveService:
 TRACKER_KINDS = {"findmy_separated", "google_dult", "tile", "smarttag", "chipolo"}
 
 PHRASES = {   # spoken on the tablet: 6 words or fewer (Guard #1)
+    "drone": "Drone staying near you",
+    "cell_suspicious": "Possible fake cell tower",
     "follow": "Device following you",
     "follow_tpms": "Car may be following you",
     "car_moved": "Your car is moving",

@@ -3,7 +3,7 @@ runs under, and what typed params each takes. The orchestrator runs only what's 
 """
 from __future__ import annotations
 
-from . import ToolSpec, ble, flipper, kismet, marauder, nmap, sdr, wifi, wired
+from . import ToolSpec, air, ble, flipper, kismet, marauder, nmap, sdr, wifi, wired
 
 
 def default_registry() -> dict[str, ToolSpec]:
@@ -108,5 +108,12 @@ def default_registry() -> dict[str, ToolSpec]:
                          "client": {"type": "mac"},
                          "seconds": {"type": "int", "min": 5, "max": 60}},
                  fn=marauder.deauth, build=lambda t, mode, scope, hw: marauder.build_deauth(t, mode, scope, hw)),
+        # ---- ADS-B / AIS (second dongle if configured; else shares the main SDR lane) ----
+        ToolSpec(name="air.adsb", category="recon.passive", space="sdr2",
+                 params={"seconds": {"type": "int", "min": 10, "max": 600}},
+                 fn=air.adsb, build=lambda t, mode, scope, hw: air.build_adsb(t, mode, scope, hw)),
+        ToolSpec(name="air.ais", category="recon.passive", space="sdr2",
+                 params={"seconds": {"type": "int", "min": 10, "max": 600}},
+                 fn=air.ais, build=lambda t, mode, scope, hw: air.build_ais(t, mode, scope, hw)),
     ]
     return {s.name: s for s in specs}

@@ -56,6 +56,10 @@ class BoxConfig:
     guard_quiet_zones: list = field(default_factory=list)   # [{"lat","lon","radius_m"}] home/work
     sentry_limit_s: int = 14 * 3600
     alpr_path: str = "/data/havokbox/alpr.json"
+    # Phase 6
+    lab_gateway: str = ""                    # baseline drift: ARP-spoof check on the gateway
+    pinned_static: list = field(default_factory=list)   # other static IPs to watch
+    rayhunter_url: str = ""                  # e.g. http://192.168.1.1:8080 (USB tether); off when empty
 
     def hardware(self) -> dict:
         from .tools import DEFAULT_HW

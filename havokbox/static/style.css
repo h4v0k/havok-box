@@ -100,3 +100,9 @@ main, .login { max-width: 46rem; margin: 0 auto; padding: 0 1rem 6rem; }
 .acked { opacity: .55; }
 .row { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .6rem; }
 .row .btn { flex: 1 1 8rem; }
+.svgrid { display: grid; gap: 2px; margin: .6rem 0; touch-action: manipulation; }
+.svgrid button { aspect-ratio: 1; min-height: 1.6rem; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--panel); color: var(--text); font: inherit; font-size: .7rem; padding: 0; cursor: pointer; }
+.svgrid button.busy { outline: 3px solid var(--glow); }
+.check { display: flex; align-items: center; gap: .6rem; min-height: 3rem; }
+.check input { width: 1.4rem; height: 1.4rem; }

@@ -49,12 +49,12 @@ def _ints(col: str) -> list[int]:
     return out
 
 
-def _hexes(col: str) -> list[str]:
+def _hexes(col: str, cap: int = 64) -> list[str]:
     out = []
     for tok in col.split(","):
         tok = tok.strip().lower().replace(":", "")
         if tok and re.fullmatch(r"[0-9a-f]+", tok) and len(tok) % 2 == 0:
-            out.append(tok[:64])
+            out.append(tok[:cap])
     return out
 
 
@@ -65,7 +65,8 @@ def _add_unique(dst: list, items: list, cap: int = 16) -> None:
 
 
 def parse_tshark_fields(text: str) -> list[dict]:
-    """Rows: addr, name, signal_dbm, nordic rssi, company_id, uuid_16, data, randomized_tx (tab separated).
+    """Rows: addr, name, signal_dbm, nordic rssi, company_id, uuid_16, data, randomized_tx,
+    service_data (tab separated; service_data is last so older column positions never shift).
 
     Dedupe by addr, keep strongest rssi, cap at 64. Repeated occurrences within a field are
     comma-joined by tshark; every occurrence is parsed and merged across rows.
@@ -86,11 +87,13 @@ def parse_tshark_fields(text: str) -> list[dict]:
                 continue
         col = lambda i: parts[i] if len(parts) > i else ""  # noqa: E731
         cids, u16, mfg = _ints(col(4)), _ints(col(5)), _hexes(col(6))
+        svc = _hexes(col(8), 128)
         rnd = any(t.strip().lower() in ("1", "true") for t in col(7).split(","))
         cur = seen.get(addr)
         if cur is None:
             cur = seen[addr] = {"addr": addr, "name": name, "rssi": rssi, "seen": 1,
-                                "company_ids": [], "uuid16": [], "mfg_data": [], "random": rnd}
+                                "company_ids": [], "uuid16": [], "mfg_data": [], "service_data": [],
+                                "random": rnd}
         else:
             cur["seen"] += 1
             if name and not cur["name"]:
@@ -101,6 +104,7 @@ def parse_tshark_fields(text: str) -> list[dict]:
         _add_unique(cur["company_ids"], cids)
         _add_unique(cur["uuid16"], u16)
         _add_unique(cur["mfg_data"], mfg)
+        _add_unique(cur["service_data"], svc)
     devs = sorted(seen.values(), key=lambda d: (d["rssi"] is None, -(d["rssi"] or 0)))
     return devs[:MAX_DEVICES]
 
@@ -119,7 +123,8 @@ def scan(sniffle_dir: str, port: str, seconds: int, work_dir: str, runner=real_r
                   "-e", "btle.advertising_address", "-e", "btcommon.eir_ad.entry.device_name",
                   "-e", "btle_rf.signal_dbm", "-e", "nordic_ble.rssi",
                   "-e", "btcommon.eir_ad.entry.company_id", "-e", "btcommon.eir_ad.entry.uuid_16",
-                  "-e", "btcommon.eir_ad.entry.data", "-e", "btle.advertising_header.randomized_tx"], 60)
+                  "-e", "btcommon.eir_ad.entry.data", "-e", "btle.advertising_header.randomized_tx",
+                  "-e", "btcommon.eir_ad.entry.service_data"], 60)
     devices = parse_tshark_fields(out)
     # Privacy: never keep raw captures once parsed.
     try:

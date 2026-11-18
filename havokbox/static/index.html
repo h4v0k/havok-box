@@ -43,8 +43,21 @@
   <main>
     <section id="tab-recon">
       <div id="cards" class="cards"></div>
+      <h2>Changes since baseline</h2>
+      <div id="drift" class="card"></div>
+
       <h2>Findings</h2>
       <div id="findings"></div>
+
+      <h2>Wi-Fi site survey</h2>
+      <div class="card" id="sv-card">
+        <p class="hint">Indoors: stand somewhere, tap that spot on the grid, hold still ~15 s. Only your own APs (scope file) are measured.</p>
+        <div id="sv-setup"></div>
+        <div id="sv-grid" class="svgrid" hidden></div>
+        <p id="sv-msg" class="hint" aria-live="polite"></p>
+        <div id="sv-actions" class="row"></div>
+        <div id="sv-past"></div>
+      </div>
     </section>
 
     <section id="tab-enumerate" hidden>
@@ -82,8 +95,13 @@
         <button type="button" id="wd-toggle" class="btn primary big">Start drive</button>
         <p id="wd-status" class="hint" aria-live="polite"></p>
       </div>
+      <p id="wd-ray" class="hint"></p>
       <h2>Alerts</h2>
       <ol id="wd-alerts" class="evidence"></ol>
+      <h2>How trackable is the car?</h2>
+      <div id="wd-expo"></div>
+      <h2>Drones</h2>
+      <ol id="wd-drones" class="evidence"></ol>
       <h2>Map</h2>
       <div id="wd-map" class="map" role="img" aria-label="Drive track and devices"></div>
       <p class="hint">Line: your route · red: trackers / alerts · grey: access points. Offline map, no tiles.</p>

@@ -40,6 +40,8 @@ LABELS = {
     "subghz.replay": "Replay {id} at {freq_mhz} MHz",
     "marauder.scan": "Scan Wi-Fi (ESP)",
     "marauder.deauth": "Deauth (ESP) on {bssid}",
+    "air.adsb": "Aircraft (ADS-B)",
+    "air.ais": "Ships (AIS)",
 }
 # Label suffixes for optional params that change what the action does.
 LABEL_SUFFIX = {"client": " → client {client}"}
