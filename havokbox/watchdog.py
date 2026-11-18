@@ -41,8 +41,11 @@ def desktop_cmd(cfg) -> list[str] | None:
     None = don't run. Off by default; needs TLS. No secret on the argv (the VNC server holds the
     password in its own 0600 vncpasswd file); the port is restricted to the box LAN by the nftables
     rule in docs/desktop.md."""
-    if not cfg.desktop_enabled or not cfg.tls_ready():
-        return None
+    if not cfg.desktop_enabled or not cfg.tls_ready() or not cfg.desktop_vnc_password_set:
+        return None   # won't run until a VNC password is attested (parity with the Console)
+    # websockify has no ttyd-style -O origin check; the TLS cert is pinned to the box IP (SAN=IP,
+    # from provision), so a DNS-rebinding page on another hostname fails cert validation. The port
+    # is also box-LAN only via nftables (docs/desktop.md), and the VNC password gates the session.
     return ["websockify", "--web", cfg.novnc_web_dir,
             "--cert", cfg.tls_cert, "--key", cfg.tls_key,
             f"{cfg.box_address}:{cfg.desktop_port}", f"localhost:{cfg.desktop_vnc_port}"]
@@ -66,6 +69,7 @@ class Watchdog:
         self.server = None
         self.console = None
         self.desktop = None
+        self._aux_restarts = {"console": [], "desktop": []}   # bounded restarts for aux children
         self.started = None
         self.restarts: list[float] = []
         self.stopped = False
@@ -145,13 +149,24 @@ class Watchdog:
             self._void(f"server exited ({self.server.poll()}), restarting")
             self.sleep(self.backoff_s)
             self.server = self.spawn(SERVER_CMD)
-        if self.console is not None and self.console.poll() is not None:
-            self._log("console", "console exited, restarting")
-            self.console = self.spawn(console_cmd(self.cfg))
-        if self.desktop is not None and self.desktop.poll() is not None:
-            self._log("desktop", "remote desktop exited, restarting")
-            self.desktop = self.spawn(desktop_cmd(self.cfg))
+        self.console = self._supervise_aux("console", self.console, console_cmd, now)
+        self.desktop = self._supervise_aux("desktop", self.desktop, desktop_cmd, now)
         return True
+
+    def _supervise_aux(self, name, proc, cmd_fn, now):
+        """Restart a crashed console/desktop child, but stop respawning after too many in a window
+        (a persistently-failing bridge must not respawn every tick forever)."""
+        if proc is None or proc.poll() is None:
+            return proc
+        hist = [t for t in self._aux_restarts[name] if now - t < self.window_s] + [now]
+        self._aux_restarts[name] = hist
+        if len(hist) > self.max_restarts:
+            self._log(name, f"{name} crash-looped ({len(hist)} in {self.window_s:.0f}s); not restarting")
+            self._stop(proc)
+            return None
+        self._log(name, f"{name} exited, restarting")
+        new = cmd_fn(self.cfg)
+        return self.spawn(new) if new else None
 
     @staticmethod
     def _signal_group(proc, sig) -> bool:

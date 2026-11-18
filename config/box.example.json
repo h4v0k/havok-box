@@ -42,5 +42,6 @@
   "desktop_port": 6080,
   "desktop_iface": "wlan0",
   "desktop_vnc_port": 5901,
-  "novnc_web_dir": "/usr/share/novnc"
+  "novnc_web_dir": "/usr/share/novnc",
+  "desktop_vnc_password_set": false
 }

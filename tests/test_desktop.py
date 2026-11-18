@@ -18,7 +18,8 @@ class DesktopHandlerTest(unittest.TestCase):
     def test_lan_only_tls_required_and_logged(self):
         d = tempfile.mkdtemp()
         cert, key = os.path.join(d, "c"), os.path.join(d, "k")
-        h, store, *_ = make(desktop_enabled=True, tls_cert=cert, tls_key=key)
+        h, store, *_ = make(desktop_enabled=True, tls_cert=cert, tls_key=key,
+                            desktop_vnc_password_set=True)
         self.assertEqual(h.desktop("10.0.0.9")[0], 403)             # off-LAN
         self.assertEqual(h.desktop(None)[0], 403)
         self.assertEqual(h.desktop("192.168.4.20")[0], 503)        # no TLS cert yet
@@ -29,6 +30,25 @@ class DesktopHandlerTest(unittest.TestCase):
         kinds = [e["kind"] for e in store.evidence()]
         self.assertIn("refused", kinds)
         self.assertIn("desktop", kinds)
+        store.close()
+
+    def test_refused_until_vnc_password_attested(self):
+        d = tempfile.mkdtemp()
+        cert, key = os.path.join(d, "c"), os.path.join(d, "k")
+        open(cert, "w").close(); open(key, "w").close()
+        h, store, *_ = make(desktop_enabled=True, tls_cert=cert, tls_key=key)  # attestation off
+        code, r = h.desktop("192.168.4.20")
+        self.assertEqual(code, 503)
+        self.assertIn("desktop_vnc_password_set", r["reason"])
+        h.cfg.desktop_vnc_password_set = True
+        self.assertEqual(h.desktop("192.168.4.20")[0], 200)
+        store.close()
+
+    def test_guard_token_cannot_reach_desktop(self):
+        h, store, *_ = make(desktop_enabled=True)
+        h.cfg.guard_token = "tablet-tok"
+        self.assertFalse(h.authorized("Bearer tablet-tok", "/api/desktop"))
+        self.assertTrue(h.authorized("Bearer s3cret", "/api/desktop"))
         store.close()
 
     def test_flag_reread_from_disk(self):
@@ -52,7 +72,9 @@ class DesktopCmdTest(unittest.TestCase):
         self.assertIsNone(desktop_cmd(BoxConfig(tls_cert=cert, tls_key=key)))     # disabled
         self.assertIsNone(desktop_cmd(BoxConfig(desktop_enabled=True, tls_cert=cert, tls_key=key)))  # no cert
         open(cert, "w").close(); open(key, "w").close()
+        self.assertIsNone(desktop_cmd(BoxConfig(desktop_enabled=True, tls_cert=cert, tls_key=key)))  # no pw attest
         cmd = desktop_cmd(BoxConfig(desktop_enabled=True, tls_cert=cert, tls_key=key,
+                                    desktop_vnc_password_set=True,
                                     box_address="192.168.4.1", desktop_port=6080, desktop_vnc_port=5901))
         self.assertEqual(cmd[0], "websockify")
         self.assertIn("--cert", cmd)
@@ -76,7 +98,7 @@ class WatchdogDesktopTest(unittest.TestCase):
         cert, key = os.path.join(d, "c"), os.path.join(d, "k")
         open(cert, "w").close(); open(key, "w").close()
         cfg = BoxConfig(db_path=os.path.join(d, "b.db"), token="t", session_limit_s=100,
-                        desktop_enabled=True, tls_cert=cert, tls_key=key)
+                        desktop_enabled=True, tls_cert=cert, tls_key=key, desktop_vnc_password_set=True)
         procs = []
         w = Watchdog(cfg, spawn=lambda cmd: (procs.append(self.P(cmd)) or procs[-1]),
                      clock=lambda: 0.0, sleep=lambda s: None)

@@ -620,6 +620,9 @@ class Handlers:
             return 403, {"status": "forbidden", "reason": "desktop is box-LAN only"}
         if not self.cfg.tls_ready():
             return 503, {"status": "error", "reason": "desktop needs the TLS cert (run provision)"}
+        if not self.cfg.desktop_password_set_now():
+            return 503, {"status": "error",
+                         "reason": "set desktop_vnc_password_set once the VNC password is configured"}
         self.api.store.log("desktop", f"desktop link issued to {client_ip}")
         # noVNC's own page prompts for the VNC password; scale=remote fits the Pi desktop to the tab.
         return 200, {"status": "ok",

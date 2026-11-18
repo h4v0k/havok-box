@@ -37,6 +37,10 @@ class BoxConfig:
     desktop_iface: str = "wlan0"
     desktop_vnc_port: int = 5901             # the VNC server, bound to localhost only
     novnc_web_dir: str = "/usr/share/novnc"  # noVNC HTML assets on the Pi
+    # The box cannot read the VNC server's ~/.vnc/passwd, so the operator ATTESTS a VNC password is
+    # set by flipping this to true. Until then the desktop bridge won't start and no link is issued
+    # (mirrors the Console refusing without console_password). NEVER run the VNC server passwordless.
+    desktop_vnc_password_set: bool = False
     evidence_dir: str = "/data/havokbox/evidence"
     # API commander — OFF until key + cap are set.
     commander_model: str = "claude-haiku-5-5"   # cheap default; configurable
@@ -124,6 +128,9 @@ class BoxConfig:
 
     def desktop_enabled_now(self) -> bool:
         return self._flag_now("desktop_enabled", self.desktop_enabled)
+
+    def desktop_password_set_now(self) -> bool:
+        return self._flag_now("desktop_vnc_password_set", self.desktop_vnc_password_set)
 
     def tls_ready(self) -> bool:
         return os.path.exists(self.tls_cert) and os.path.exists(self.tls_key)
