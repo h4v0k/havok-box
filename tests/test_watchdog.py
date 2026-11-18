@@ -94,12 +94,14 @@ class WatchdogTest(unittest.TestCase):
         self.assertFalse(w.tick())
 
     def test_console_only_when_enabled_with_token(self):
-        self.assertIsNone(console_cmd(BoxConfig(token="t")))
-        self.assertIsNone(console_cmd(BoxConfig(console_enabled=True, token="")))
-        cmd = console_cmd(BoxConfig(console_enabled=True, token="t", console_iface="wlan0"))
-        self.assertEqual(cmd[:5], ["ttyd", "-W", "-i", "wlan0", "-p"])
-        self.assertIn("havok:t", cmd)
+        self.assertIsNone(console_cmd(BoxConfig(token="t", console_password="pw")))
+        self.assertIsNone(console_cmd(BoxConfig(console_enabled=True, token="t")))  # no own password
+        cmd = console_cmd(BoxConfig(console_enabled=True, token="tok", console_password="pw"))
+        self.assertEqual(cmd[:6], ["ttyd", "-W", "-O", "-i", "wlan0", "-p"])
+        self.assertIn("havok:pw", cmd)
+        self.assertFalse(any("tok" in c for c in cmd))     # dashboard token never on a cmdline
         self.cfg.console_enabled = True
+        self.cfg.console_password = "pw"
         w = self.wd(); w.boot()
         self.assertEqual(self.procs[1].cmd[0], "ttyd")
         self.procs[1].rc = 0

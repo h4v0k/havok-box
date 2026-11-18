@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import collections
 import hmac
+import os
 import queue
 import subprocess
 import threading
@@ -114,6 +115,8 @@ class Handlers:
             return 400, {"status": "error", "reason": f"unknown space: {space!r}"}
         if mode not in MODES:
             return 400, {"status": "error", "reason": f"unknown mode: {mode!r}"}
+        if space == "wired" and mode == "stealth":
+            return 409, self.api.scan(space, mode)      # refused up front, nothing queued
         job = self.jobs.submit(f"Scan {space} [{mode}]", lambda: self.api.scan(space, mode))
         return 202, {"status": "queued", "job_id": job["id"]}
 
@@ -150,9 +153,10 @@ class Handlers:
         if not self.cfg.on_lan(client_ip):
             self.api.store.log("refused", f"console requested from off-LAN {client_ip}")
             return 403, {"status": "forbidden", "reason": "console is box-LAN only"}
-        hostname = (host or "").split(":")[0] or "127.0.0.1"
+        if not self.cfg.console_password:
+            return 503, {"status": "error", "reason": "console_password not set"}
         self.api.store.log("console", f"console link issued to {client_ip}")
-        return 200, {"status": "ok", "url": f"http://{hostname}:{self.cfg.console_port}/"}
+        return 200, {"status": "ok", "url": f"http://{self.cfg.box_address}:{self.cfg.console_port}/"}
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +182,17 @@ def build(cfg: BoxConfig | None = None):
 
     cfg = cfg or BoxConfig.load()
     store = Store(cfg.db_path)
+    # Fail-closed even when started without the watchdog (manual run, bare systemd unit).
+    n = store.void_unconsumed_approvals()
+    store.log("server", f"start: voided {n} unconsumed approval(s)")
     scope = load_scope(cfg.scope_path)
     registry = default_registry()
-    orch = Orchestrator(scope, store, registry, make_runner(cfg.session_limit_s))
+    orch = Orchestrator(scope, store, registry, make_runner(cfg.tool_timeout_s))
     api = Api(scope, store, orch, mode=cfg.default_mode)
     jobs = Jobs(store)
     commander = ApiCommander(cfg.anthropic_api_key, cfg.commander_model,
-                             cfg.commander_max_calls_per_day, registry)
+                             cfg.commander_max_calls_per_day, registry,
+                             counter_path=os.path.join(os.path.dirname(cfg.db_path), "commander-cap.json"))
     drainer = Drainer(store, commander, registry, scope)
     threading.Thread(target=drainer.run_forever, args=(cfg.drain_interval_s,),
                      daemon=True, name="havokbox-drain").start()

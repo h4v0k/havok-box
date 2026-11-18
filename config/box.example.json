@@ -1,0 +1,16 @@
+{
+  "db_path": "/data/havokbox/box.db",
+  "scope_path": "config/scope.yaml",
+  "lan_cidrs": ["192.168.4.0/24"],
+  "box_address": "192.168.4.1",
+  "default_mode": "stealth",
+  "session_limit_s": 14400,
+  "tool_timeout_s": 900,
+  "console_enabled": false,
+  "console_port": 7681,
+  "console_iface": "wlan0",
+  "evidence_dir": "/data/havokbox/evidence",
+  "commander_model": "claude-opus-5-5",
+  "commander_max_calls_per_day": 0,
+  "drain_interval_s": 30
+}

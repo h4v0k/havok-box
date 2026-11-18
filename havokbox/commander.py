@@ -9,6 +9,7 @@ Spend cap (req 8): a hard per-day call ceiling; 0 disables the commander entirel
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.request
 
@@ -29,7 +30,7 @@ class SpendCapReached(RuntimeError):
 
 class ApiCommander:
     def __init__(self, api_key: str, model: str, max_calls_per_day: int, tools: dict,
-                 transport=None, clock=time.time, max_tokens: int = 600):
+                 transport=None, clock=time.time, max_tokens: int = 600, counter_path=None):
         self.api_key = api_key
         self.model = model
         self.max_calls = max_calls_per_day
@@ -37,8 +38,8 @@ class ApiCommander:
         self.transport = transport or self._http
         self.clock = clock
         self.max_tokens = max_tokens
-        self._day = None
-        self._calls = 0
+        self.counter_path = counter_path   # persisted so restarts can't reset the cap
+        self._day, self._calls = self._load()
 
     @property
     def enabled(self) -> bool:
@@ -51,6 +52,24 @@ class ApiCommander:
         if self._calls >= self.max_calls:
             raise SpendCapReached(f"commander cap of {self.max_calls} calls/day reached")
         self._calls += 1
+        self._save()
+
+    def _load(self):
+        if self.counter_path:
+            try:
+                with open(self.counter_path) as fh:
+                    d = json.load(fh)
+                return int(d["day"]), int(d["calls"])
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        return None, 0
+
+    def _save(self):
+        if self.counter_path:
+            tmp = self.counter_path + ".tmp"
+            with open(tmp, "w") as fh:
+                json.dump({"day": self._day, "calls": self._calls}, fh)
+            os.replace(tmp, self.counter_path)
 
     def _tool_menu(self) -> list[dict]:
         return [{"tool": s.name, "category": s.category, "params": s.params} for s in self.tools.values()]

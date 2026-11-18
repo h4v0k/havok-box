@@ -59,15 +59,15 @@ class FlowTest(unittest.TestCase):
         self.assertEqual(self.h.state()[1]["mode"], "standard")
 
     def _proposal(self):
-        self.h.scan({"space": "wired", "mode": "stealth"})
+        self.h.scan({"space": "wired", "mode": "standard"})
         self.drain_jobs()
         return self.h.state()[1]["proposals"][0]
 
     def test_preview_matches_the_command_that_runs(self):
         p = self._proposal()
         self.assertTrue(p["needs_approval"] and p["runnable"])
-        self.assertEqual(p["mode"], "stealth")
-        self.h.mode({"mode": "standard"})       # toggling later must not change a frozen proposal
+        self.assertEqual(p["mode"], "standard")
+        self.h.mode({"mode": "stealth"})        # toggling later must not change a frozen proposal
         p2 = self.h.state()[1]["proposals"][0]
         self.assertEqual(p2["command"], p["command"])
         self.h.approve({"task_id": p["task_id"]})
@@ -75,7 +75,7 @@ class FlowTest(unittest.TestCase):
         self.drain_jobs()
         import shlex
         self.assertEqual(shlex.join(self.runner.cmds[-1]), p["command"])
-        self.assertIn("-T1", p["command"])
+        self.assertIn("-T4", p["command"])
 
     def test_run_without_approval_does_not_execute(self):
         p = self._proposal()
@@ -133,6 +133,47 @@ class FlowTest(unittest.TestCase):
         self.assertTrue(any(e["kind"] == "error" for e in self.store.evidence()))
 
 
+class ReviewFixesTest(unittest.TestCase):
+    def test_stealth_wired_refuses_instead_of_sweeping(self):
+        h, store, runner, *_ = make()
+        code, r = h.scan({"space": "wired", "mode": "stealth"})
+        self.assertEqual((code, r["status"]), (409, "unavailable"))
+        self.assertEqual(h.jobs.q.qsize(), 0)
+        self.assertEqual(runner.cmds, [])
+        store.close()
+
+    def test_discovery_needing_approval_becomes_approvable_proposal(self):
+        from tests.helpers import SCOPE
+        import copy
+        from havokbox.scope import Scope
+        h, store, runner, *_ = make()
+        sc = copy.deepcopy(SCOPE); sc["auto_allow"] = ["recon.passive"]   # the shipped example
+        h.api.scope = Scope(sc); h.api.orch.scope = h.api.scope
+        from havokbox.scope import Gate
+        h.api.orch.gate = Gate(h.api.scope)
+        h.scan({"space": "wired", "mode": "standard"})
+        while h.jobs.run_one(timeout=0):
+            pass
+        self.assertEqual(h.state()[1]["jobs"][0]["status"], "needs_approval")
+        p = h.state()[1]["proposals"][0]
+        self.assertTrue(p["needs_approval"] and p["runnable"])
+        self.assertIn("nmap -sn", p["command"])
+        h.approve({"task_id": p["task_id"]}); h.run({"task_id": p["task_id"]})
+        while h.jobs.run_one(timeout=0):
+            pass
+        self.assertEqual(len(h.state()[1]["findings"]), 1)
+        store.close()
+
+    def test_evidence_recent_is_bounded_newest_first(self):
+        h, store, *_ = make()
+        for i in range(80):
+            store.log("x", str(i))
+        ev = h.state()[1]["evidence"]
+        self.assertEqual(len(ev), 50)
+        self.assertEqual(ev[0]["detail"], "79")
+        store.close()
+
+
 class ConsoleTest(unittest.TestCase):
     def test_off_by_default(self):
         h, store, *_ = make()
@@ -143,11 +184,13 @@ class ConsoleTest(unittest.TestCase):
 
     def test_lan_only_and_logged(self):
         h, store, *_ = make(console_enabled=True)
+        self.assertEqual(h.console("192.168.4.20", "box")[0], 503)   # no console password set
+        h.cfg.console_password = "pw"
         self.assertEqual(h.console("10.0.0.9", "box")[0], 403)
         self.assertEqual(h.console(None, "box")[0], 403)
-        code, r = h.console("192.168.4.20", "192.168.4.1:8080")
+        code, r = h.console("192.168.4.20", "evil.example:8080")
         self.assertEqual(code, 200)
-        self.assertEqual(r["url"], "http://192.168.4.1:7681/")
+        self.assertEqual(r["url"], "http://192.168.4.1:7681/")   # configured, never the Host header
         kinds = [e["kind"] for e in store.evidence()]
         self.assertIn("refused", kinds)
         self.assertIn("console", kinds)

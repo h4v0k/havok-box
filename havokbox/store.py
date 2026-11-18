@@ -107,9 +107,12 @@ class Store:
                 (result_id, kind, json.dumps(payload), time.time()),
             )
 
+    def _read(self, sql, args=()):
+        with self._lock:  # reads take the same lock, so they never see another thread's open txn
+            return [dict(r) for r in self.cx.execute(sql, args)]
+
     def pending_queue(self):
-        return [dict(r) for r in self.cx.execute(
-            "SELECT * FROM offline_queue WHERE done IS NULL ORDER BY id")]
+        return self._read("SELECT * FROM offline_queue WHERE done IS NULL ORDER BY id")
 
     def drain(self, queue_id, result_id, step_kind, task) -> None:
         """Write the proposal and mark the entry done atomically. Idempotent on retry."""
@@ -143,11 +146,13 @@ class Store:
 
     # ---- reads (dashboard / publisher) ------------------------------------
     def findings(self):
-        return [dict(r) for r in self.cx.execute("SELECT * FROM findings ORDER BY created")]
+        return self._read("SELECT * FROM findings ORDER BY created")
 
     def proposals(self):
-        return [dict(r) for r in self.cx.execute(
-            "SELECT * FROM proposals WHERE status='pending' ORDER BY created")]
+        return self._read("SELECT * FROM proposals WHERE status='pending' ORDER BY created")
 
     def evidence(self):
-        return [dict(r) for r in self.cx.execute("SELECT * FROM evidence ORDER BY id")]
+        return self._read("SELECT * FROM evidence ORDER BY id")
+
+    def evidence_recent(self, limit=50):
+        return self._read("SELECT * FROM evidence ORDER BY id DESC LIMIT ?", (int(limit),))

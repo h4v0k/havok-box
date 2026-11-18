@@ -19,8 +19,17 @@ approval, against in-scope lab targets.
 
 ## Status
 
-Scaffolding. See `docs/requirements.md` for the numbered requirements and `docs/architecture.md` for the
-component and data-flow design. Code modules land after the design check passes.
+Phase 1 (Wi-Fi + wired recon, box-served dashboard) built. Run on the Pi:
+
+```
+cp config/box.example.json config/box.json      # edit lan_cidrs / box_address
+cp config/scope.example.yaml config/scope.yaml  # edit to your lab
+pip install fastapi uvicorn pyyaml
+HAVOKBOX_TOKEN=... python3 -m havokbox.watchdog # serves the dashboard on :8080
+python3 -m unittest discover -s tests
+```
+
+Console setup: `docs/console.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
 
 ## Hardware
 

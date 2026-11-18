@@ -133,6 +133,16 @@ class CommanderTest(unittest.TestCase):
         self.assertEqual(sent[0]["model"], "claude-opus-5-5")
         self.assertLessEqual(sent[0]["max_tokens"], 1000)
 
+    def test_cap_survives_restart(self):
+        import os, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "cap.json")
+        tr = lambda body: {"content": [{"type": "text", "text": '{"tasks": []}'}]}
+        c1 = ApiCommander("k", "m", 1, {}, transport=tr, clock=lambda: 5.0, counter_path=path)
+        c1.propose({})
+        c2 = ApiCommander("k", "m", 1, {}, transport=tr, clock=lambda: 5.0, counter_path=path)
+        with self.assertRaises(SpendCapReached):
+            c2.propose({})
+
     def test_parse_tasks_tolerates_junk(self):
         self.assertEqual(parse_tasks("no json"), [])
         self.assertEqual(parse_tasks('{"tasks": "nope"}'), [])

@@ -22,10 +22,13 @@ class BoxConfig:
     lan_cidrs: list = field(default_factory=lambda: ["192.168.4.0/24"])  # box-LAN (its own AP / hotspot)
     default_mode: str = "stealth"
     session_limit_s: int = 4 * 3600          # watchdog ends the session after this
+    tool_timeout_s: int = 900                # one hung tool can't block the job queue for hours
     # Console (web terminal) — escape hatch, OFF by default.
     console_enabled: bool = False
     console_port: int = 7681
     console_iface: str = "wlan0"
+    console_password: str = ""               # separate from the dashboard token; required to run
+    box_address: str = "192.168.4.1"         # address handed out in the console link
     evidence_dir: str = "/data/havokbox/evidence"
     # API commander — OFF until key + cap are set.
     commander_model: str = "claude-opus-5-5"
@@ -45,6 +48,8 @@ class BoxConfig:
         cfg = cls(**known)
         if env.get("HAVOKBOX_TOKEN"):
             cfg.token = env["HAVOKBOX_TOKEN"]
+        if env.get("HAVOKBOX_CONSOLE_PASSWORD"):
+            cfg.console_password = env["HAVOKBOX_CONSOLE_PASSWORD"]
         if env.get("ANTHROPIC_API_KEY"):
             cfg.anthropic_api_key = env["ANTHROPIC_API_KEY"]
         cfg.validate()

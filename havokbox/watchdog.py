@@ -25,11 +25,14 @@ SERVER_CMD = [sys.executable, "-m", "havokbox.server"]
 
 
 def console_cmd(cfg: BoxConfig) -> list[str] | None:
-    """ttyd bound to the box-LAN interface, basic-auth with the dashboard token. None = don't run."""
-    if not cfg.console_enabled or not cfg.token:
+    """ttyd on the box-LAN interface with its own password. None = don't run."""
+    if not cfg.console_enabled or not cfg.console_password:
         return None
-    return ["ttyd", "-W", "-i", cfg.console_iface, "-p", str(cfg.console_port),
-            "-c", f"havok:{cfg.token}", sys.executable, "-m", "havokbox.console_session"]
+    # Own credential, never the dashboard token (ttyd's -c is visible in /proc/*/cmdline).
+    # -O: reject cross-origin websocket upgrades. Restrict :console_port to box-LAN clients with
+    # the nftables rule in docs/console.md — ttyd itself can only bind an interface.
+    return ["ttyd", "-W", "-O", "-i", cfg.console_iface, "-p", str(cfg.console_port),
+            "-c", f"havok:{cfg.console_password}", sys.executable, "-m", "havokbox.console_session"]
 
 
 class Watchdog:

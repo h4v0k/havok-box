@@ -64,7 +64,20 @@ class Api:
         mode = mode or self.mode
         if mode not in MODES:
             raise ValueError(f"unknown mode: {mode}")
-        res = self.orch.execute(self._space_task(space, mode))
+        if space == "wired" and mode == "stealth":
+            # Stealth discovery is a passive listener (bettercap/arpwatch) that isn't built yet.
+            # Refuse rather than run an active sweep and record it as "stealth".
+            return {"status": "unavailable",
+                    "reason": "passive host listen not built yet; switch to Standard to sweep"}
+        task = self._space_task(space, mode)
+        if Gate(self.scope).evaluate(task).needs_approval:
+            # Scope says this scan needs approval: park it as a proposal the dashboard can approve.
+            task.update({"step_kind": f"scan:{space}:{task['id']}", "label": f"Discover hosts on "
+                         f"{task['target'].get('network', space)}", "suggested": True,
+                         "_rid": f"scan:{space}", "_step": f"scan:{space}:{task['id']}"})
+            self.store.add_proposal(task["_rid"], task["_step"], task)
+            return {"status": "needs_approval", "task_id": task["id"]}
+        res = self.orch.execute(task)
         if res.get("status") == "ok":
             self._plan_from(res["result_id"])
         return res
@@ -134,7 +147,7 @@ class Api:
                 "label": t.get("label"),
                 "mode": t.get("mode", "stealth"),
                 "suggested": bool(t.get("suggested")) and runnable,
-                "needs_approval": t.get("category") not in PASSIVE_CATS,
+                "needs_approval": decision.needs_approval or not decision.allowed,
                 "command": cmd,
                 "runnable": runnable,
                 "in_scope": decision.allowed,
@@ -142,7 +155,7 @@ class Api:
                 "why": t.get("why", ""),
                 "source": "commander" if str(t.get("step_kind", "")).startswith("ai:") else "planner",
             })
-        evidence = self.store.evidence()[-evidence_limit:][::-1]
+        evidence = self.store.evidence_recent(evidence_limit)
         return {"mode": self.mode, "phase": self._phase(findings, proposals),
                 "findings": findings, "proposals": proposals, "evidence": evidence,
                 "commander_pending": bool(self.store.pending_queue())}

@@ -62,9 +62,11 @@ function fmtTarget(t) {
 
 function renderMode() {
   for (const b of $$(".mode button")) b.setAttribute("aria-checked", String(b.dataset.mode === state.mode));
-  $("[data-hint=wired]").textContent = state.mode === "stealth"
-    ? "Stealth: passive listen isn't wired yet — sweep runs as nmap -sn on in-scope networks."
+  const stealth = state.mode === "stealth";
+  $("[data-hint=wired]").textContent = stealth
+    ? "Stealth host discovery (passive listen) isn't built yet. Switch to Standard to sweep."
     : "Standard: nmap -sn sweep of in-scope networks (excluded hosts skipped).";
+  $("[data-scan=wired]").dataset.stealthOff = stealth ? "1" : "";
 }
 
 function renderPhase() {
@@ -121,10 +123,16 @@ function stepButton(p) {
 function renderFindings() {
   const box = $("#findings");
   const fs = state.findings.slice().reverse();
+  const known = new Set(state.findings.map((f) => f.result_id));
+  const waiting = state.proposals.filter((p) => !known.has(p.result_id));
+  const waitBox = waiting.length ? el("article", { class: "finding" },
+    el("header", {}, el("span", { class: "sum", text: "Scans waiting for approval" })),
+    el("div", { class: "steps" }, waiting.map(stepButton))) : null;
+  if (!fs.length && waitBox) { box.replaceChildren(waitBox); return; }
   if (!fs.length) { box.replaceChildren(el("p", { class: "empty", text: "No findings yet. Start with a recon card above." })); return; }
   const byResult = {};
   for (const p of state.proposals) (byResult[p.result_id] ||= []).push(p);
-  box.replaceChildren(...fs.map((f) => {
+  box.replaceChildren(...(waitBox ? [waitBox] : []), ...fs.map((f) => {
     const twins = (f.data && f.data.evil_twins || []).length;
     const steps = (byResult[f.result_id] || []).sort((a, b) => b.suggested - a.suggested);
     return el("article", { class: "finding" },
@@ -148,7 +156,7 @@ function render() {
   renderMode(); renderPhase(); renderStatus(); renderFindings(); renderEvidence();
   $("[data-tab=console]").hidden = !state.console_enabled;
   const busy = !!state.running;
-  for (const b of $$("[data-scan]")) b.disabled = busy;
+  for (const b of $$("[data-scan]")) b.disabled = busy || b.dataset.stealthOff === "1";
 }
 
 async function refresh() {
@@ -165,8 +173,15 @@ for (const b of $$(".mode button")) b.addEventListener("click", async () => {
 });
 for (const b of $$("[data-scan]")) b.addEventListener("click", async () => {
   b.disabled = true;
-  try { await call("POST", "/api/scan", { space: b.dataset.scan, mode: state.mode }); }
-  catch (e) { $("#status").textContent = "Scan failed: " + e.message; }
+  try {
+    const r = await call("POST", "/api/scan", { space: b.dataset.scan, mode: state.mode });
+    if (r.status === "needs_approval") {
+      await refresh();
+      const p = state.proposals.find((x) => x.task_id === r.task_id);
+      if (p) openSheet(p);
+      return;
+    }
+  } catch (e) { $("#status").textContent = "Scan failed: " + e.message; }
   refresh();
 });
 
