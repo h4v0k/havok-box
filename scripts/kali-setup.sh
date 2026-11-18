@@ -16,12 +16,17 @@
 #   --box-ip <ip>        box-LAN address handed out in links   (default 192.168.4.1)
 #   --lan-cidr <cidr>    box-LAN subnet for the firewall       (default 192.168.4.0/24)
 #   --iface <iface>      box-LAN interface                     (default wlan0)
+#   --admin-pass <pw>    the one password (VNC + Kismet + console); else prompted once
 #   --no-recon           skip the RF/recon tool packs (core + dashboard only)
 #   --no-desktop         don't install/enable the noVNC desktop
-#   --enable-console     install ttyd and enable the web shell (prompts for a password)
-#   --unattended         never prompt; skips vncpasswd, so the desktop is installed but left OFF
+#   --enable-console     install ttyd and enable the web shell (uses the admin password)
+#   --unattended         never prompt; needs --admin-pass (or env) or one is generated
 #   --app-dir <path>     where the repo lives                  (default: this repo)
 #   -h, --help           show this and exit
+#
+# You enter ONE password (or pass --admin-pass / $HAVOKBOX_ADMIN_PASSWORD) and
+# everything else — the VNC password, the Kismet admin login, and the read-only
+# Kismet API key — is set up automatically.
 set -euo pipefail
 
 # ---- defaults ---------------------------------------------------------------
@@ -32,6 +37,7 @@ WANT_RECON=1
 WANT_DESKTOP=1
 WANT_CONSOLE=0
 UNATTENDED=0
+ADMIN_PW="${HAVOKBOX_ADMIN_PASSWORD:-}"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 DATA_DIR="/data/havokbox"
@@ -52,6 +58,7 @@ while [ $# -gt 0 ]; do
     --box-ip)        BOX_IP="$2"; shift 2;;
     --lan-cidr)      LAN_CIDR="$2"; shift 2;;
     --iface)         IFACE="$2"; shift 2;;
+    --admin-pass)    ADMIN_PW="$2"; shift 2;;
     --no-recon)      WANT_RECON=0; shift;;
     --no-desktop)    WANT_DESKTOP=0; shift;;
     --enable-console) WANT_CONSOLE=1; shift;;
@@ -70,6 +77,30 @@ command -v apt-get >/dev/null || die "no apt-get — this script targets Kali/De
 command -v python3 >/dev/null || die "python3 missing."
 PYVER="$(python3 -c 'import sys;print("%d.%d"%sys.version_info[:2])')"
 ok "repo: $APP_DIR   python: $PYVER   box: $BOX_IP ($IFACE, $LAN_CIDR)   user: $RUN_USER"
+
+# ---- the one password -------------------------------------------------------
+# Used for the VNC desktop, the Kismet admin login, and (if enabled) the console.
+# Everything downstream is automated from it.
+NEED_PW=0
+{ [ "$WANT_DESKTOP" -eq 1 ] || [ "$WANT_CONSOLE" -eq 1 ]; } && NEED_PW=1
+{ [ "$WANT_RECON" -eq 1 ] && NEED_PW=1; } || true     # Kismet admin login
+if [ "$NEED_PW" -eq 1 ] && [ -z "$ADMIN_PW" ]; then
+  if [ "$UNATTENDED" -eq 1 ]; then
+    ADMIN_PW="$(openssl rand -base64 12 | tr -d '/+=' | cut -c1-16)"
+    PW_GENERATED=1
+    warn "unattended with no --admin-pass: generated one, recorded in $ETC_DIR/havokbox.env"
+  else
+    say "Set the box admin password (the only thing you enter — used for VNC, Kismet, console)"
+    read -rsp "    Password: " ADMIN_PW; echo
+    read -rsp "    Confirm : " _pw2; echo
+    [ -n "$ADMIN_PW" ] || die "empty password."
+    [ "$ADMIN_PW" = "$_pw2" ] || die "passwords didn't match."
+    unset _pw2
+  fi
+  # VNC only honors the first 8 characters of the password it checks.
+  [ "${#ADMIN_PW}" -gt 8 ] && [ "$WANT_DESKTOP" -eq 1 ] && \
+    warn "note: the VNC desktop only uses the first 8 characters of the password"
+fi
 
 # ---- packages ---------------------------------------------------------------
 say "Installing packages (missing tools just hide their buttons; failures are non-fatal)"
@@ -153,6 +184,10 @@ if [ ! -f "$ENVFILE" ]; then
 else
   ok "existing secrets kept"
 fi
+if [ "${PW_GENERATED:-0}" -eq 1 ] && ! grep -q '^HAVOKBOX_ADMIN_PASSWORD=' "$ENVFILE"; then
+  printf 'HAVOKBOX_ADMIN_PASSWORD=%s\n' "$ADMIN_PW" >> "$ENVFILE"   # generated in --unattended
+  ok "recorded generated admin password"
+fi
 
 # ---- TLS cert + token provisioning -----------------------------------------
 say "Provisioning TLS (box CA pinned to $BOX_IP)"
@@ -172,9 +207,9 @@ if [ "$WANT_RECON" -eq 1 ] && command -v gpsd >/dev/null; then
   ok "gpsd configured (-b read-only)"
 fi
 
-# ---- Kismet -----------------------------------------------------------------
+# ---- Kismet (fully automated: pre-seed admin -> start -> mint read-only key) -
 if [ "$WANT_RECON" -eq 1 ] && command -v kismet >/dev/null; then
-  say "Kismet (gps=gpsd; read-only API key is a one-time manual step)"
+  say "Kismet (gps=gpsd; admin login pre-seeded; read-only API key auto-minted)"
   install -d -m 0755 /etc/kismet
   SITE=/etc/kismet/kismet_site.conf
   if [ ! -f "$SITE" ]; then
@@ -185,23 +220,70 @@ if [ "$WANT_RECON" -eq 1 ] && command -v kismet >/dev/null; then
     } > "$SITE"
     ok "wrote $SITE"
   else ok "existing kismet_site.conf kept"; fi
-  # Point the poller at where its read-only key header will live.
-  python3 - "$CONFIG" <<'PY'
+
+  KHEADER="$DATA_DIR/secrets/kismet.header"   # matches the poller default
+  install -d -m 0700 -o "$RUN_USER" -g "$RUN_USER" "$DATA_DIR/secrets"
+  python3 - "$CONFIG" "$KHEADER" <<'PY'
 import json, sys
-p = sys.argv[1]; c = json.load(open(p)); hw = c.setdefault("hw", {})
-hw.setdefault("kismet_header", "/data/havokbox/kismet-apikey.header")
+p, hdr = sys.argv[1:3]; c = json.load(open(p)); c.setdefault("hw", {})["kismet_header"] = hdr
 json.dump(c, open(p, "w"), indent=2)
 PY
-  cat > "$DATA_DIR/kismet-apikey.header.README" <<EOF
-Kismet read-only API key — one-time, needs the daemon running:
-  1) Start kismet once and create the admin login in its web UI (http://$BOX_IP:2501).
-  2) Settings -> API keys -> create a key with role 'readonly'.
-  3) Save it as the HTTP header the poller sends:
-       echo 'Authorization: Bearer <KEY>' > /data/havokbox/kismet-apikey.header
-       chmod 600 /data/havokbox/kismet-apikey.header
-The poller only reads (last-time/-15 + fields filter); it never writes to Kismet.
+
+  # Pre-seed the admin login so there is no first-run web wizard.
+  KHOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+  install -d -m 0700 -o "$RUN_USER" -g "$RUN_USER" "$KHOME/.kismet"
+  HTTPD_CONF="$KHOME/.kismet/kismet_httpd.conf"
+  umask 077
+  printf 'httpd_username=admin\nhttpd_password=%s\n' "$ADMIN_PW" > "$HTTPD_CONF"
+  chown "$RUN_USER":"$RUN_USER" "$HTTPD_CONF"; chmod 0600 "$HTTPD_CONF"
+  ok "admin login pre-seeded ($HTTPD_CONF)"
+
+  # A service so the REST API is up (no capture sources needed just to mint a key).
+  cat > /etc/systemd/system/havokbox-kismet.service <<EOF
+[Unit]
+Description=havok-box Kismet (REST API; sources from kismet_site.conf)
+After=network.target gpsd.socket
+[Service]
+User=$RUN_USER
+ExecStart=/usr/bin/kismet --no-ncurses
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
 EOF
-  ok "poller header path set; see kismet-apikey.header.README for the one manual step"
+  systemctl daemon-reload
+  systemctl enable --now havokbox-kismet.service >/dev/null 2>&1 || warn "kismet service didn't start"
+
+  # Wait for the REST API, then mint a read-only key (idempotent: keep a working one).
+  if [ -s "$KHEADER" ] && curl -s --fail --max-time 5 -H "@$KHEADER" \
+        http://localhost:2501/system/status.json >/dev/null 2>&1; then
+    ok "existing read-only key still valid — kept"
+  else
+    ready=0
+    for _ in $(seq 1 30); do
+      curl -s --fail --max-time 3 http://localhost:2501/system/status.json >/dev/null 2>&1 \
+        && { ready=1; break; }; sleep 1
+    done
+    if [ "$ready" -eq 1 ]; then
+      KCFG="$(mktemp)"; printf 'user = "admin:%s"\n' "$ADMIN_PW" > "$KCFG"; chmod 600 "$KCFG"
+      TOKEN="$(curl -s --fail --max-time 10 --config "$KCFG" \
+        -d 'json={"name":"havokbox-ro","role":"readonly","duration":0}' \
+        http://localhost:2501/auth/apikey/generate.cmd 2>/dev/null || true)"
+      rm -f "$KCFG"
+      if [ -n "$TOKEN" ] && [ "${#TOKEN}" -lt 200 ]; then
+        printf 'KISMET: %s\n' "$TOKEN" > "$KHEADER"
+        chown "$RUN_USER":"$RUN_USER" "$KHEADER"; chmod 0600 "$KHEADER"
+        if curl -s --fail --max-time 5 -H "@$KHEADER" \
+             http://localhost:2501/system/status.json >/dev/null 2>&1; then
+          ok "read-only API key minted and verified ($KHEADER)"
+        else warn "key written but validation failed; check the readonly role"; fi
+      else
+        warn "couldn't mint the key (admin login?); set it later:"
+        warn "  curl -u admin:<pw> -d 'json={\"name\":\"havokbox-ro\",\"role\":\"readonly\",\"duration\":0}' \\"
+        warn "    http://localhost:2501/auth/apikey/generate.cmd  > the token, then: printf 'KISMET: <tok>\\n' > $KHEADER"
+      fi
+    else warn "Kismet REST API didn't come up in 30s; journalctl -u havokbox-kismet"; fi
+  fi
 fi
 
 # ---- noVNC desktop ----------------------------------------------------------
@@ -211,13 +293,14 @@ if [ "$WANT_DESKTOP" -eq 1 ] && command -v websockify >/dev/null; then
   NOVNC_DIR=/usr/share/novnc
   [ -d "$NOVNC_DIR" ] || warn "noVNC assets not at $NOVNC_DIR; set novnc_web_dir if elsewhere"
   VNC_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
-  if [ "$UNATTENDED" -eq 1 ]; then
-    warn "unattended: skipping vncpasswd — desktop stays OFF until you set one and flip the flag"
-  elif [ -f "$VNC_HOME/.vnc/passwd" ]; then
-    ok "VNC password already set"; DESKTOP_ON=1
+  install -d -m 0700 -o "$RUN_USER" -g "$RUN_USER" "$VNC_HOME/.vnc"
+  # Non-interactive: derive ~/.vnc/passwd from the one admin password (filter mode).
+  if printf '%s\n' "$ADMIN_PW" | sudo -u "$RUN_USER" vncpasswd -f > "$VNC_HOME/.vnc/passwd" 2>/dev/null \
+     && [ -s "$VNC_HOME/.vnc/passwd" ]; then
+    chown "$RUN_USER":"$RUN_USER" "$VNC_HOME/.vnc/passwd"; chmod 0600 "$VNC_HOME/.vnc/passwd"
+    DESKTOP_ON=1; ok "VNC password set from the admin password"
   else
-    echo "    Set the VNC password now (its own secret — never the dashboard token):"
-    sudo -u "$RUN_USER" vncpasswd && DESKTOP_ON=1 || warn "vncpasswd failed; desktop left OFF"
+    warn "vncpasswd -f failed; desktop left OFF"
   fi
   # systemd user-less service that owns the :1 display, bound to localhost.
   if [ "$DESKTOP_ON" -eq 1 ]; then
@@ -251,20 +334,17 @@ fi
 
 # ---- console (optional) -----------------------------------------------------
 if [ "$WANT_CONSOLE" -eq 1 ] && command -v ttyd >/dev/null; then
-  say "Web console (ttyd) — scope-gate bypass"
-  if [ "$UNATTENDED" -eq 0 ]; then
-    read -rsp "    Set a console password (different from the dashboard token): " CPW; echo
-    if [ -n "$CPW" ]; then
-      sed -i '/^# HAVOKBOX_CONSOLE_PASSWORD=/d; /^HAVOKBOX_CONSOLE_PASSWORD=/d' "$ENVFILE"
-      echo "HAVOKBOX_CONSOLE_PASSWORD=$CPW" >> "$ENVFILE"
-      python3 - "$CONFIG" <<'PY'
+  say "Web console (ttyd) — scope-gate bypass, uses the admin password"
+  if [ -n "$ADMIN_PW" ]; then
+    sed -i '/^# HAVOKBOX_CONSOLE_PASSWORD=/d; /^HAVOKBOX_CONSOLE_PASSWORD=/d' "$ENVFILE"
+    printf 'HAVOKBOX_CONSOLE_PASSWORD=%s\n' "$ADMIN_PW" >> "$ENVFILE"
+    python3 - "$CONFIG" <<'PY'
 import json, sys
 p=sys.argv[1]; c=json.load(open(p)); c["console_enabled"]=True
 json.dump(c, open(p,"w"), indent=2)
 PY
-      ok "console_enabled = true"
-    else warn "empty password; console left OFF"; fi
-  else warn "unattended: console left OFF (set HAVOKBOX_CONSOLE_PASSWORD + console_enabled)"; fi
+    ok "console_enabled = true"
+  else warn "no admin password; console left OFF"; fi
 fi
 
 # ---- firewall (box-LAN only for the bypass ports) ---------------------------
@@ -335,8 +415,13 @@ $(say "Done")
 EOF
 [ "$DESKTOP_ON" -eq 1 ] && echo "  Desktop   :  on — dashboard 'Desktop' tab (prompts for the VNC password)" \
                         || echo "  Desktop   :  installed but OFF — run vncpasswd, then set the two desktop_* flags true"
-[ "$WANT_RECON" -eq 1 ] && command -v kismet >/dev/null && \
-  echo "  Kismet    :  create the read-only API key (see $DATA_DIR/kismet-apikey.header.README)"
+if [ "$WANT_RECON" -eq 1 ] && command -v kismet >/dev/null; then
+  if [ -s "$DATA_DIR/secrets/kismet.header" ]; then
+    echo "  Kismet    :  read-only API key minted; add capture sources in /etc/kismet/kismet_site.conf"
+  else
+    echo "  Kismet    :  daemon up; API key not minted — journalctl -u havokbox-kismet"
+  fi
+fi
 cat <<EOF
   Status    :  systemctl status havokbox-dashboard havokbox-watchdog
   Logs      :  journalctl -u havokbox-watchdog -f
