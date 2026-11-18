@@ -40,9 +40,10 @@ def default_online(host: str = "api.anthropic.com", port: int = 443, timeout: fl
 
 class Drainer:
     def __init__(self, store, commander, registry: dict, scope, online=default_online,
-                 clock=time.monotonic):
+                 clock=time.monotonic, publisher=None):
         self.store = store
         self.commander = commander
+        self.publisher = publisher
         self.registry = registry
         self.gate = Gate(scope)
         self.online = online
@@ -83,11 +84,27 @@ class Drainer:
             self.store.log("commander", f"drain deferred ({n}/{MAX_ATTEMPTS}): {why}")
 
     # ---- one pass ---------------------------------------------------------
+    def _drain_publish(self) -> int:
+        from .publisher import publish_pending
+        pending = [e for e in self.store.pending_queue() if e["kind"] == "publish"]
+        if not pending or self._next_try.get(pending[0]["id"], 0) > self.clock():
+            return 0
+        try:
+            publish_pending(self.store, self.publisher)
+        except Exception as exc:
+            self._fail(pending[0]["id"], f"publish: {exc}")
+            return 0
+        return len(pending)
+
     def drain_once(self) -> int:
         """Drain what we can. Returns how many queue entries were completed."""
-        if not getattr(self.commander, "enabled", False) or not self.online():
+        pub = self.publisher is not None and getattr(self.publisher, "enabled", False)
+        com = getattr(self.commander, "enabled", False)
+        if not (pub or com) or not self.online():
             return 0
-        done = 0
+        done = self._drain_publish() if pub else 0
+        if not com:
+            return done
         now = self.clock()
         for entry in self.store.pending_queue():
             if entry["kind"] != "commander" or self._next_try.get(entry["id"], 0) > now:

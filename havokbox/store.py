@@ -183,5 +183,17 @@ class Store:
     def evidence(self):
         return self._read("SELECT * FROM evidence ORDER BY id")
 
+    def snapshot_read(self, evidence_limit=2000) -> dict:
+        """One consistent read for the publisher: everything under the store lock, so no write
+        can land between the tables (architecture §5)."""
+        with self._lock:
+            q = lambda sql, a=(): [dict(r) for r in self.cx.execute(sql, a)]
+            return {
+                "findings": q("SELECT * FROM findings ORDER BY created"),
+                "proposals": q("SELECT * FROM proposals ORDER BY created"),
+                "evidence": q("SELECT * FROM (SELECT * FROM evidence ORDER BY id DESC LIMIT ?)"
+                              " ORDER BY id", (int(evidence_limit),)),
+            }
+
     def evidence_recent(self, limit=50):
         return self._read("SELECT * FROM evidence ORDER BY id DESC LIMIT ?", (int(limit),))

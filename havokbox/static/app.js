@@ -202,8 +202,24 @@ function renderEvidence() {
     el("li", {}, el("span", { class: "k " + e.kind, text: e.kind }), e.detail, el("time", { text: fmtTime(e.ts) }))));
 }
 
+function renderPublish() {
+  const p = state.publish || { enabled: false };
+  const btn = $("#publish-btn"), st = $("#publish-status"), link = $("#publish-link");
+  btn.hidden = !p.enabled;
+  link.hidden = !p.enabled;
+  if (!p.enabled) {
+    st.textContent = "Publishing is off. Set publish_url in config/box.json and HAVOKBOX_PUBLISH_TOKEN to enable it.";
+    return;
+  }
+  link.href = p.viewer_url;
+  const running = state.running.some((j) => j.lane === "publish");
+  btn.disabled = running;
+  const last = p.last_version ? `Last published v${p.last_version} · ${fmtTime(p.last_at)} · sha256 ${p.last_sha256}…` : "Not published yet.";
+  st.textContent = running ? "Publishing…" : p.pending ? `${last} A publish is waiting and will go out when the box is online.` : last;
+}
+
 function render() {
-  renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence();
+  renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence(); renderPublish();
   $("[data-tab=console]").hidden = !state.console_enabled;
 }
 
@@ -263,6 +279,12 @@ $("#sheet-run").addEventListener("click", async () => {
     await call("POST", "/api/run", { task_id: p.task_id });
     closeSheet();
   } catch (e) { $("#sheet-note").textContent = "Failed: " + e.message + ". Close and reopen to see the current command."; $("#sheet-run").disabled = false; }
+  refresh();
+});
+
+$("#publish-btn").addEventListener("click", async () => {
+  $("#publish-btn").disabled = true;
+  try { await call("POST", "/api/publish"); } catch (e) { $("#publish-status").textContent = "Publish failed: " + e.message; }
   refresh();
 });
 

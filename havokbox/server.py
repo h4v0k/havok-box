@@ -110,10 +110,11 @@ class Jobs:
 # Handlers — all the server logic, HTTP-free
 # ---------------------------------------------------------------------------
 class Handlers:
-    def __init__(self, api, cfg: BoxConfig, jobs: Jobs):
+    def __init__(self, api, cfg: BoxConfig, jobs: Jobs, publisher=None):
         self.api = api
         self.cfg = cfg
         self.jobs = jobs
+        self.publisher = publisher
 
     # ---- auth -------------------------------------------------------------
     def authorized(self, auth_header: str | None) -> bool:
@@ -128,7 +129,28 @@ class Handlers:
         st = self.api.state()
         st.update(self.jobs.snapshot())
         st["console_enabled"] = self.cfg.console_enabled_now()
+        st["publish"] = self._publish_state()
         return 200, st
+
+    def _publish_state(self) -> dict:
+        p = self.publisher
+        if p is None or not p.enabled:
+            return {"enabled": False}
+        s = p.state()
+        return {"enabled": True, "viewer_url": p.url + "/", "last_version": s.get("version"),
+                "last_at": s.get("at"), "last_sha256": (s.get("sha256") or "")[:16],
+                "pending": any(e["kind"] == "publish" for e in self.api.store.pending_queue())}
+
+    def publish(self) -> tuple[int, dict]:
+        """Report phase: publish a read-only snapshot. Queued first, so an offline box (or a failed
+        push) publishes on reconnect via the drain loop."""
+        from .publisher import publish_pending, request_publish
+        if self.publisher is None or not self.publisher.enabled:
+            return 409, {"status": "error", "reason": "publishing not configured"}
+        request_publish(self.api.store)
+        job = self.jobs.submit("Publish snapshot", lambda: publish_pending(self.api.store, self.publisher),
+                               lane="publish")
+        return 202, {"status": "queued", "job_id": job["id"]}
 
     def scan(self, body: dict) -> tuple[int, dict]:
         body = body or {}
@@ -240,10 +262,15 @@ def build(cfg: BoxConfig | None = None):
     commander = ApiCommander(cfg.anthropic_api_key, cfg.commander_model,
                              cfg.commander_max_calls_per_day, registry,
                              counter_path=os.path.join(os.path.dirname(cfg.db_path), "commander-cap.json"))
-    drainer = Drainer(store, commander, registry, scope)
+    from .publisher import Publisher
+    publisher = Publisher(store, cfg.publish_url, cfg.publish_token,
+                          os.path.join(os.path.dirname(cfg.db_path), "publish-state.json"),
+                          box=cfg.box_name, scope_name=getattr(scope, "name", ""),
+                          evidence_limit=cfg.publish_evidence_limit)
+    drainer = Drainer(store, commander, registry, scope, publisher=publisher)
     threading.Thread(target=drainer.run_forever, args=(cfg.drain_interval_s,),
                      daemon=True, name="havokbox-drain").start()
-    return Handlers(api, cfg, jobs)
+    return Handlers(api, cfg, jobs, publisher=publisher)
 
 
 SECURITY_HEADERS = {
@@ -308,6 +335,9 @@ def create_app(handlers: Handlers | None = None):
     async def get_job(request):
         return reply(h.job(request.path_params["job_id"]))
 
+    async def post_publish(request):
+        return reply(h.publish())
+
     async def get_console(request):
         return reply(h.console(request.client.host if request.client else None))
 
@@ -320,6 +350,7 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/run", post_run, methods=["POST"]),
         Route("/api/jobs/{job_id}", get_job),
         Route("/api/console", get_console),
+        Route("/api/publish", post_publish, methods=["POST"]),
         Mount("/", StaticFiles(directory=static, html=True)),
     ]
     return Starlette(routes=routes, middleware=[Middleware(Guard)])

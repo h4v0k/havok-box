@@ -32,6 +32,7 @@ class Decision:
 
 class Scope:
     def __init__(self, data: dict):
+        self.name = str(data.get("name") or "")
         nets = data.get("networks") or {}
         self.include = [ipaddress.ip_network(c, strict=False) for c in nets.get("include", [])]
         self.exclude = [ipaddress.ip_network(c, strict=False) for c in nets.get("exclude", [])]

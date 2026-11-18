@@ -89,3 +89,4 @@ main, .login { max-width: 46rem; margin: 0 auto; padding: 0 1rem 6rem; }
   border: 1px solid var(--line); background: var(--panel); color: var(--text); margin-bottom: .8rem; }
 .err { color: var(--danger); }
 .sheet h2 { color: var(--text); text-transform: none; letter-spacing: 0; font-size: 1.25rem; margin-top: 0; overflow-wrap: anywhere; }
+.link { color: var(--accent); font-weight: 700; display: inline-flex; min-height: 3rem; align-items: center; }

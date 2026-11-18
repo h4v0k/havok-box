@@ -41,6 +41,11 @@ class BoxConfig:
     allow_insecure_http: bool = False
     source_path: str = ""
     hw: dict = field(default_factory=dict)  # interface/serial overrides; see tools.DEFAULT_HW
+    # Phase 2: one-way read-only snapshot to Cloudflare. Empty URL = publishing off.
+    publish_url: str = ""                    # e.g. https://havok-box-snapshot.<you>.workers.dev
+    publish_token: str = ""                  # write-only ingest token (HAVOKBOX_PUBLISH_TOKEN)
+    publish_evidence_limit: int = 2000
+    box_name: str = "havok-box"
 
     def hardware(self) -> dict:
         from .tools import DEFAULT_HW
@@ -61,6 +66,8 @@ class BoxConfig:
             cfg.token = env["HAVOKBOX_TOKEN"]
         if env.get("HAVOKBOX_CONSOLE_PASSWORD"):
             cfg.console_password = env["HAVOKBOX_CONSOLE_PASSWORD"]
+        if env.get("HAVOKBOX_PUBLISH_TOKEN"):
+            cfg.publish_token = env["HAVOKBOX_PUBLISH_TOKEN"]
         if env.get("ANTHROPIC_API_KEY"):
             cfg.anthropic_api_key = env["ANTHROPIC_API_KEY"]
         cfg.validate()
@@ -71,6 +78,8 @@ class BoxConfig:
             raise ValueError(f"default_mode must be one of {MODES}")
         for c in self.lan_cidrs:
             ipaddress.ip_network(c, strict=False)
+        if self.publish_url and not self.publish_url.startswith("https://"):
+            raise ValueError("publish_url must be https://")
         if self.session_limit_s <= 0:
             raise ValueError("session_limit_s must be > 0")
 

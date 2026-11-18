@@ -59,11 +59,17 @@
     </section>
 
     <section id="tab-report" hidden>
+      <h2>Publish</h2>
+      <div class="card" id="publish-card">
+        <button type="button" id="publish-btn" class="btn primary big">Publish read-only snapshot</button>
+        <p id="publish-status" class="hint" aria-live="polite"></p>
+        <p><a id="publish-link" class="link" target="_blank" rel="noopener noreferrer" hidden>Open read-only viewer</a></p>
+      </div>
       <h2>Findings timeline</h2>
       <ol id="timeline" class="evidence"></ol>
       <h2>Evidence log</h2>
       <ol id="evidence" class="evidence"></ol>
-      <p class="hint">Publishing a read-only Cloudflare snapshot arrives in Phase 2.</p>
+
     </section>
 
     <section id="tab-console" hidden>
