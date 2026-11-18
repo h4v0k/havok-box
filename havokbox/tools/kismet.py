@@ -10,7 +10,18 @@ import json
 
 from ..store import new_id
 
-KISMET_CMD = ["curl", "-s", "http://localhost:2501/devices/views/all/devices.json"]
+KISMET_URL = "http://localhost:2501/devices/views/all/devices.json"
+DEFAULT_HEADER_FILE = "/data/havokbox/secrets/kismet.header"   # "Cookie: KISMET=<api key>", 0600
+
+
+def build_cmd(hw: dict) -> list[str]:
+    """curl reads the auth header from a root-only file (-H @file), so the API key never appears
+    in argv, /proc, the approval preview or the evidence log. --fail: a 401 yields no output."""
+    header = (hw or {}).get("kismet_header") or DEFAULT_HEADER_FILE
+    return ["curl", "-s", "--fail", "--max-time", "20", "-H", f"@{header}", KISMET_URL]
+
+
+KISMET_CMD = build_cmd({})   # back-compat: default argv
 
 
 def _normalise(d: dict) -> tuple[str, dict]:
@@ -54,9 +65,21 @@ def detect_evil_twins(aps: list[dict], known_ssids: set, known_bssids: set) -> l
     return twins
 
 
+NO_DATA = ("Kismet returned nothing — check the API key file "
+           "(hw.kismet_header, 'Cookie: KISMET=<key>') and that kismet is running")
+
+
 def scan(task: dict, ctx) -> dict:
-    raw = ctx.runner(KISMET_CMD)
-    devices = json.loads(raw) if raw else []
+    raw = ctx.runner(build_cmd(getattr(ctx, "hw", {})))
+    try:
+        devices = json.loads(raw) if raw and raw.strip() else None
+    except ValueError:
+        devices = None
+    if devices is None:
+        # No key file, wrong key (401 via --fail) or kismet down: say so instead of "0 APs".
+        return {"result_id": new_id(), "space": "wifi", "kind": "wifi_survey",
+                "summary": NO_DATA, "data": {"aps": [], "clients": [], "evil_twins": [],
+                                             "error": "kismet_unavailable"}}
     aps, clients = parse_devices(devices)
     twins = detect_evil_twins(aps, set(ctx.scope.ssids), set(ctx.scope.bssids))
     note = f", {len(twins)} evil twin(s)" if twins else ""

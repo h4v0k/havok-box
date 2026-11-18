@@ -31,7 +31,7 @@ def default_registry() -> dict[str, ToolSpec]:
             params={},
             fn=kismet.scan,
             space="wifi",
-            build=lambda t, mode, scope, hw: [list(kismet.KISMET_CMD)],
+            build=lambda t, mode, scope, hw: [kismet.build_cmd(hw)],
         ),
         # ---- wired -------------------------------------------------------
         ToolSpec(name="wired.listen", category="recon.passive", space="wired",

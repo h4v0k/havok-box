@@ -40,3 +40,21 @@ class KismetTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KismetAuthTest(unittest.TestCase):
+    def test_key_read_from_file_never_in_argv(self):
+        from havokbox.tools import kismet
+        argv = kismet.build_cmd({"kismet_header": "/data/x/kismet.header"})
+        self.assertIn("@/data/x/kismet.header", argv)
+        self.assertIn("--fail", argv)
+        self.assertFalse(any("KISMET=" in a for a in argv))
+
+    def test_no_output_says_key_not_set(self):
+        from havokbox.tools import ToolCtx, kismet
+        ctx = ToolCtx(runner=lambda cmd: "", mode="stealth", scope=Scope({}))
+        r = kismet.scan({"target": {}}, ctx)
+        self.assertIn("API key", r["summary"])
+        self.assertEqual(r["data"]["error"], "kismet_unavailable")
+        ctx.runner = lambda cmd: "<html>401</html>"
+        self.assertEqual(kismet.scan({"target": {}}, ctx)["data"]["error"], "kismet_unavailable")
