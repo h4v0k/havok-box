@@ -24,7 +24,7 @@ from .commander import SpendCapReached
 MAX_DIGEST_BYTES = 16 * 1024
 SUMMARY_ONLY_KINDS = {"creds_default", "poison", "rogue_ap"}
 _SECRET_KEY = re.compile(
-    r"pass|hash|cred|ntlm|secret|token|apikey|api_key|private|raw|output|stdout|stderr|capture|pcap|cookie",
+    r"pass|hash|cred|ntlm|secret|token|key|private|raw|output|stdout|stderr|capture|pcap|cookie",
     re.I)
 _NOTABLE = ("service", "nuclei", "tls", "vuln", "smb", "evil", "twin")
 

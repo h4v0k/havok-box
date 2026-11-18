@@ -335,9 +335,13 @@ class Api:
             return False
         return granted == self.current_digest(t)
 
+    def _is_recipe(self, tool) -> bool:
+        spec = self.registry.get(tool)
+        return bool(spec is not None and getattr(spec, "recipe", False))
+
     def needs_approval(self, task: dict) -> bool:
         d = self.gate.evaluate(task)
-        return d.needs_approval or not d.allowed
+        return d.needs_approval or not d.allowed or self._is_recipe(task.get("tool"))
 
     def run(self, task_id: str) -> dict:
         t = self._find_proposal(task_id)
@@ -377,7 +381,7 @@ class Api:
                 "label": t.get("label"),            # generated in code (tasks.LABELS)
                 "mode": t.get("mode", "stealth"),
                 "suggested": bool(t.get("suggested")) and runnable,
-                "needs_approval": decision.needs_approval or not decision.allowed,
+                "needs_approval": decision.needs_approval or not decision.allowed or self._is_recipe(t.get("tool")),
                 "approved": self.store.open_approval(t.get("id")) is not None,
                 "command": command_for(t, self.scope, self.registry, self.orch.hw),
                 "digest": task_digest(t, argv),

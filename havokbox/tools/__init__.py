@@ -88,8 +88,12 @@ def validate_params(spec: ToolSpec, target: dict) -> tuple[bool, str]:
                 if "max" in meta and value > meta["max"]:
                     return False, f"{name}: above {meta['max']}"
             elif kind == "name":
-                if not isinstance(value, str) or not _NAME.match(value):
-                    return False, f"{name}: must be 1-64 of A-Z a-z 0-9 _ -"
+                if not isinstance(value, str) or not _NAME.match(value) or value.startswith("-"):
+                    return False, f"{name}: must be 1-64 of A-Z a-z 0-9 _ - and not start with -"
+            elif kind == "ssid":
+                if not isinstance(value, str) or not (1 <= len(value) <= 32) or \
+                        any(ord(c) < 0x20 or ord(c) == 0x7f for c in value):
+                    return False, f"{name}: ssid must be 1-32 printable characters"
             elif kind == "choice":
                 if value not in meta.get("choices", ()):
                     return False, f"{name}: must be one of {list(meta.get('choices', ()))}"

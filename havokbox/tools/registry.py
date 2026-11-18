@@ -149,7 +149,7 @@ def _add_kali_test(specs):
                       "domain": {"type": "str", "required": True}, **secs},
               fn=kt.net_poison_mitm6, build=lambda t, m, sc, hw: kt.build_net_poison_mitm6(t, m, sc, hw)),
         _spec(None, "test", name="wifi.rogue_ap", category="wifi.rogue_ap", space="wifi",
-              params={"ssid": {"type": "name", "required": True}, **secs},
+              params={"ssid": {"type": "ssid", "required": True}, **secs},
               fn=kt.wifi_rogue_ap, build=lambda t, m, sc, hw: kt.build_wifi_rogue_ap(t, m, sc, hw)),
     ]
 

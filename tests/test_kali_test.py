@@ -278,9 +278,13 @@ class PoisonHelperDoRogueApTest(unittest.TestCase):
         self.assertEqual(result, {"status": "ok", "ssid": "LAB-NET", "clients_seen": 2})
 
     def test_bad_ssid_rejected(self):
+        # a real SSID with a space/'!' is fine (the gate confines it to wifi.ssids); control chars
+        # and over-length are the real guard
         with tempfile.TemporaryDirectory() as work:
-            with self.assertRaises(poison.HelperError):
-                poison.do_rogue_ap("wlan1mon", "not ssid!", 60, work, runner=lambda a, t: "")
+            poison.do_rogue_ap("wlan1mon", "My Lab AP!", 60, work, runner=lambda a, t: "")   # ok
+            for bad in ("has\x00null", "x" * 33, "line\nbreak"):
+                with self.assertRaises(poison.HelperError):
+                    poison.do_rogue_ap("wlan1mon", bad, 60, work, runner=lambda a, t: "")
 
 
 class PoisonHelperCliMainTest(unittest.TestCase):

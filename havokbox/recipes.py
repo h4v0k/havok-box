@@ -29,6 +29,13 @@ SHELLS = {"sh", "bash", "zsh", "dash", "ash", "ksh", "csh", "tcsh", "fish", "bus
           "eval", "exec", "command", "source", "."}
 PY = re.compile(r"^python[0-9.]*$")
 PARSERS = {"lines", "json", "xml", "none"}
+# A recipe is free-form owner config, so it may only declare the three general recon categories.
+# The pre-scoped dangerous categories (poisoning, rogue AP, deauth, injection, credential attempts,
+# RF transmit, BLE connect) each need a specific target allowlist that a generic recipe can't bind
+# to its actual binary — those come only from code-reviewed built-in tools. A recipe is also ALWAYS
+# approval-gated and refused during wardrive (see orchestrator), so a mislabeled-passive recipe
+# wrapping an active binary can't run unapproved or during a drive.
+RECIPE_CATEGORIES = {"recon.passive", "recon.discovery", "recon.active"}
 # the gate target key each category requires, so a recipe can't declare an active category with no
 # scoped target and sneak past the gate on a missing-key refusal
 REQUIRED_KEY = {c: "ip" for c in NETWORK_CATEGORIES}
@@ -37,7 +44,7 @@ REQUIRED_KEY.update({c: "addr" for c in BLE_CATEGORIES})
 REQUIRED_KEY.update({c: "id" for c in RF_TX_CATEGORIES})
 REQUIRED_KEY[POISON] = "network"
 REQUIRED_KEY[ROGUE_AP] = "ssid"
-PARAM_TYPES = {"cidr", "ip", "bssid", "mac", "int", "number", "name", "choice"}   # never "str"
+PARAM_TYPES = {"cidr", "ip", "bssid", "mac", "int", "number", "name", "choice", "ssid"}  # never "str"
 MAX_TIMEOUT = 900
 
 
@@ -58,6 +65,9 @@ def _validate(rec: dict, known_categories: set) -> dict:
     category = rec.get("category")
     if category not in known_categories:
         raise RecipeError(f"{name}: unknown category {category!r}")
+    if category not in RECIPE_CATEGORIES:
+        raise RecipeError(f"{name}: category {category} is not allowed in a recipe "
+                          f"(use a built-in tool for {category})")
     params = rec.get("params") or {}
     if not isinstance(params, dict):
         raise RecipeError(f"{name}: params must be a mapping")

@@ -43,7 +43,8 @@ class Orchestrator:
             )
             return {"status": "refused", "reason": "category/tool mismatch"}
 
-        if self.passive_only and spec.category != "recon.passive":
+        is_recipe = bool(getattr(spec, "recipe", False))
+        if self.passive_only and (spec.category != "recon.passive" or is_recipe):
             self.store.log("refused", f"{spec.name}: wardrive running, passive only")
             return {"status": "refused", "reason": "wardrive running: passive tools only"}
 
@@ -57,7 +58,9 @@ class Orchestrator:
             self.store.log("refused", f"{spec.name}: bad params: {why}")
             return {"status": "refused", "reason": why}
 
-        if decision.needs_approval:
+        # A recipe is owner-authored free-form argv, so it always passes through the approval sheet
+        # (showing the exact command) even when its declared category is passive.
+        if decision.needs_approval or is_recipe:
             if not self.store.consume_approval(task_id):
                 return {"status": "awaiting_approval", "task_id": task_id}
 

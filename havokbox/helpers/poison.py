@@ -70,6 +70,15 @@ def validate_name(name: str) -> str:
     return name
 
 
+def validate_ssid(ssid: str) -> str:
+    # The gate already confirmed ssid is in the owner's own wifi.ssids; here we only block control
+    # characters that could corrupt argv. argv is a list, so there is no shell to inject into.
+    if not isinstance(ssid, str) or not (1 <= len(ssid) <= 32) or \
+            any(ord(c) < 0x20 or ord(c) == 0x7f for c in ssid):
+        raise HelperError(f"invalid ssid: {ssid!r}")
+    return ssid
+
+
 def validate_seconds(seconds: int, lo: int = 30, hi: int = 300) -> int:
     if not isinstance(seconds, int) or isinstance(seconds, bool) or not (lo <= seconds <= hi):
         raise HelperError(f"invalid seconds: {seconds!r}")
@@ -165,7 +174,7 @@ def do_mitm6(iface: str, domain: str, seconds: int, work_dir: str, runner=defaul
 def do_rogue_ap(iface: str, ssid: str, seconds: int, work_dir: str, runner=default_runner,
                  clock=time.time) -> dict:
     iface = validate_iface(iface)
-    ssid = validate_name(ssid)
+    ssid = validate_ssid(ssid)
     seconds = validate_seconds(seconds)
     session_dir = new_session_dir(work_dir, "rogue-ap", clock)
     out = runner(rogue_ap_argv(iface, ssid, seconds), seconds + 5)

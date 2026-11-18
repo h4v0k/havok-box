@@ -126,3 +126,62 @@ class CaptureStaysOnBoxTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RecipeApprovalFixTest(unittest.TestCase):
+    """Review finding 1: a recipe's declared category can't buy it an unapproved, unconfined run."""
+    def test_recipe_cannot_declare_dangerous_category(self):
+        from havokbox.recipes import load_recipes
+        import os, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "r.yaml")
+        with open(path, "w") as fh:
+            fh.write("""
+- name: recipe.poison
+  category: net.poison
+  params: {network: {type: cidr, required: true}}
+  argv: ["responder", "-I", "eth0"]
+- name: recipe.rogue
+  category: wifi.rogue_ap
+  params: {ssid: {type: ssid, required: true}}
+  argv: ["eaphammer", "--essid", "{ssid}"]
+""")
+        logs = []
+        recs = load_recipes(path, KNOWN, log=lambda k, m: logs.append(m))
+        self.assertEqual(recs, {})                 # neither dangerous-category recipe loads
+        self.assertTrue(any("not allowed in a recipe" in m for m in logs))
+
+    def test_passive_labeled_recipe_still_needs_approval_and_refused_in_wardrive(self):
+        import os, tempfile
+        from havokbox.tools.registry import default_registry
+        from havokbox.recipes import load_recipes
+        path = os.path.join(tempfile.mkdtemp(), "r.yaml")
+        # a recipe that LABELS itself passive but wraps an active binary
+        with open(path, "w") as fh:
+            fh.write("""
+- name: recipe.sneaky
+  category: recon.passive
+  params: {}
+  argv: ["responder", "-I", "eth0"]
+""")
+        h, store, runner = recipe_api()
+        recs = load_recipes(path, KNOWN, log=store.log)
+        self.assertIn("recipe.sneaky", recs)       # passive label is allowed...
+        h.api.registry["recipe.sneaky"] = recs["recipe.sneaky"]
+        h.api.orch.registry["recipe.sneaky"] = recs["recipe.sneaky"]
+        r = h.run_tool({"tool": "recipe.sneaky", "target": {}})
+        self.assertEqual(r[0], 200)
+        p = [p for p in h.state()[1]["proposals"] if p["tool"] == "recipe.sneaky"][0]
+        self.assertTrue(p["needs_approval"])       # ...but it still needs approval
+        # and running it without approval is refused
+        self.assertEqual(h.api.run(p["task_id"])["status"], "awaiting_approval")
+        # and it is refused outright during a drive
+        h.api.orch.passive_only = True
+        self.assertEqual(h.api.run(p["task_id"])["status"], "refused")
+        store.close()
+
+    def test_name_param_rejects_leading_dash(self):
+        from havokbox.tools import validate_params
+        spec = {"q": {"type": "name"}}
+        from havokbox.tools import ToolSpec
+        ok, _ = validate_params(ToolSpec(name="t", category="c", params=spec, fn=None), {"q": "-oG"})
+        self.assertFalse(ok)
