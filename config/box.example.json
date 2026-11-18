@@ -26,5 +26,13 @@
   "guard_quiet_zones": [],
   "discord_map_links": false,
   "sentry_limit_s": 50400,
-  "alpr_path": "/data/havokbox/alpr.json"
+  "alpr_path": "/data/havokbox/alpr.json",
+  "lab_gateway": "",
+  "pinned_static": [],
+  "rayhunter_url": "",
+  "hw": {
+    "sdr_serial": "",
+    "sdr2_serial": "",
+    "ais_device_index": null
+  }
 }

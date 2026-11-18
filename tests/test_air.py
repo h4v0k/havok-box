@@ -104,10 +104,11 @@ class AirToolTest(unittest.TestCase):
         self.assertEqual(res["data"], {"aircraft": [], "emergencies": []})
 
     def test_build_ais(self):
-        hw = {**DEFAULT_HW, "sdr2_serial": "AIR2"}
+        hw = {**DEFAULT_HW, "sdr2_serial": "AIR2", "ais_device_index": 1}
         a = air.build_ais({"seconds": 120}, "standard", SCOPE, hw)[0]
         self.assertEqual(a[:3], ["timeout", "120", "AIS-catcher"])
-        self.assertIn("-d:AIR2", a)
+        self.assertIn("-d:1", a)          # AIS-catcher selects by index, not serial
+        self.assertNotIn("-d:AIR2", a)
         self.assertNotIn("-d:", " ".join(air.build_ais({}, "s", SCOPE, DEFAULT_HW)[0]))
 
     def test_ais_fn(self):

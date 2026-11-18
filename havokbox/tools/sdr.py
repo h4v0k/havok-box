@@ -7,12 +7,15 @@ import statistics
 from ..store import new_id
 
 
-def dev_args(hw, key: str = "sdr_serial") -> list[str]:
-    """Pin the dongle by serial so two SDRs can never be swapped or double-opened (Phase 6 #15)."""
+def dev_args(hw, key: str = "sdr_serial", style: str = "rtl_433") -> list[str]:
+    """Pin the dongle by serial so two SDRs can never be swapped or double-opened (Phase 6 #15).
+    rtl_433 selects a serial as "-d :SERIAL"; librtlsdr tools (rtl_power) take the bare serial."""
     serial = (hw or {}).get(key) or ""
     if serial and not all(c.isalnum() or c in "-_" for c in serial):
         raise ValueError("bad SDR serial")
-    return ["-d", f":{serial}"] if serial else []
+    if not serial:
+        return []
+    return ["-d", f":{serial}"] if style == "rtl_433" else ["-d", serial]
 
 DECODE_FREQS = ("315M", "433.92M", "915M")
 _DROP = {"raw", "data", "codes", "mic", "rows", "pulse_data"}
@@ -25,7 +28,7 @@ def build_survey(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
     seconds = int(t.get("seconds") or 60)
     if start >= end:
         raise ValueError("start_mhz must be below end_mhz")
-    return [["rtl_power"] + dev_args(hw) + ["-f", f"{start:g}M:{end:g}M:1M", "-i", "10", "-e", f"{seconds}s",
+    return [["rtl_power"] + dev_args(hw, style="librtlsdr") + ["-f", f"{start:g}M:{end:g}M:1M", "-i", "10", "-e", f"{seconds}s",
              "/dev/stdout"]]
 
 

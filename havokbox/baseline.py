@@ -34,6 +34,10 @@ def inventory(findings) -> dict:
         data = f.get("data") if isinstance(f.get("data"), dict) else {}
         if kind == "hosts":
             sp = inv.setdefault(space, {})
+            for an in data.get("anomalies") or []:
+                if isinstance(an, dict) and an.get("type") == "arp_conflict" and an.get("ip"):
+                    meta.setdefault("arp_conflicts", []).append(
+                        {"ip": str(an["ip"]), "macs": [str(m) for m in (an.get("macs") or [])][:8]})
             for h in data.get("hosts") or []:
                 if not isinstance(h, dict) or not h.get("ip"):
                     continue
@@ -106,6 +110,20 @@ def drift(inv, baseline_rows, gateway_ip=None, pinned_static=()) -> list:
             kind = a.get("kind")
             if kind == "host":
                 ips = a.get("ips") or [a.get("ip")]
+                # A KNOWN host taking over the gateway / a pinned IP is the classic spoof (review #1)
+                spoof = None
+                if not a.get("weak"):
+                    for ip in ips:
+                        if ip in special and base_ip_mac.get(ip) not in (None, key):
+                            spoof = (ip, f"{ip} was {base_ip_mac[ip]} in the baseline, now answered by {key}")
+                            break
+                    if spoof is None and gateway_ip in ips and gateway_ip in base_ip_mac:
+                        owned = [ip for ip in ips if ip in base_ip_mac and base_ip_mac[ip] != key]
+                        if len(owned) >= 2 or (gateway_ip in owned and len(ips) >= 2):
+                            spoof = (gateway_ip, f"{key} answers for {len(ips)} IPs including the gateway")
+                if spoof:
+                    out.append(_item(space, key, "arp_spoof", "high", spoof[0], spoof[1]))
+                    continue
                 if key in b:
                     old = (b[key].get("attrs") or {}).get("ip")
                     if old and old not in ips:
@@ -153,6 +171,13 @@ def drift(inv, baseline_rows, gateway_ip=None, pinned_static=()) -> list:
                     k = "new_ble" if kind == "ble" else "new_iot"
                     out.append(_item(space, key, k, "low", a.get("name") or a.get("model") or key,
                                      f"new {kind} id {key}"))
+    # Same-capture conflicts reported by the passive listener (review #2): two MACs for one IP.
+    for c in (inv.get("_meta") or {}).get("arp_conflicts", []):
+        ip = c.get("ip")
+        sev = "high" if ip in special else "medium"
+        out.append(_item("wired", f"conflict:{ip}", "arp_spoof" if sev == "high" else "arp_conflict",
+                         sev, ip, f"{ip} answered by {len(c.get('macs') or [])} MACs in one capture: "
+                                  + ", ".join((c.get("macs") or [])[:4])))
     for space, b in base.items():
         if space not in inv:
             continue

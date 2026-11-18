@@ -220,6 +220,9 @@ class Handlers:
         if prep["status"] == "needs_approval":
             return 200, prep
         task = prep["task"]
+        wd = self._wd()
+        if task.get("tool") == "air.ais" and wd is not None and wd.running():
+            return 409, {"status": "error", "reason": "AIS is a parked/manual scan; not during a drive"}
         try:
             job = self.jobs.submit(f"{task['label']} [{mode}]", lambda: self.api.execute_scan(task),
                                    lane=self.lane_for(space))
@@ -318,9 +321,7 @@ class Handlers:
                "live_distance_m": wd.live_distance_m(), "notes": list(wd.notes)[:10],
                "rayhunter": getattr(self, "rayhunter", None),
                "exposure": wd.last_exposure,
-               "drones": [{k: v for k, v in dr.items() if k not in ("op_lat", "op_lon")}
-                          | {"operator_known": dr.get("op_lat") is not None}
-                          for dr in (wd.drones.drones(time.time()) if wd.drones else [])][:50]}
+               "drones": self._drones(wd)}
         if sid:
             track = db.query("SELECT ts, lat, lon, degraded FROM track WHERE session_id=? ORDER BY ts", (sid,))
             step = max(1, len(track) // 500)
@@ -339,6 +340,20 @@ class Handlers:
                 "SELECT radio, COUNT(DISTINCT dev_key) AS devices FROM device_cells WHERE session_id=? "
                 "GROUP BY radio", (sid,))
         return 200, out
+
+    @staticmethod
+    def _drones(wd) -> list:
+        """Live drones without plaintext ids or the pilot's position (resolution #10). The UA id
+        is shown only for a drone that raised an alert."""
+        out = []
+        alerted = set(wd.plain.values()) if wd.plain else set()
+        for i, dr in enumerate((wd.drones.drones(time.time()) if wd.drones else [])[:50]):
+            show = dr.get("addr") in alerted
+            out.append({"label": dr.get("ua_id") if show and dr.get("ua_id") else f"Drone {i + 1}",
+                        "lat": dr.get("lat"), "lon": dr.get("lon"), "alt": dr.get("alt"),
+                        "speed": dr.get("speed"), "last_seen": dr.get("last_seen"),
+                        "operator_known": dr.get("op_lat") is not None, "alerted": show})
+        return out
 
     def wardrive_export(self, session: str | None, fmt: str | None):
         """Returns (code, payload) or (200, (bytes, filename, mimetype))."""

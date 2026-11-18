@@ -10,7 +10,7 @@ _STEP_HZ = {"315": 5000, "433": 5000, "915": 50000, "gps_l1": 10000}
 def sweep_argv(band_key: str, gain_db: int = 30, seconds: int = 10, hw=None) -> list[str]:
     from ..tools.sdr import dev_args
     lo, hi = BANDS[band_key]
-    return ["rtl_power"] + dev_args(hw) + ["-f", f"{lo}M:{hi}M:{_STEP_HZ[band_key]}", "-g", str(int(gain_db)),
+    return ["rtl_power"] + dev_args(hw, style="librtlsdr") + ["-f", f"{lo}M:{hi}M:{_STEP_HZ[band_key]}", "-g", str(int(gain_db)),
             "-i", "2", "-e", f"{int(seconds)}s", "/dev/stdout"]
 
 

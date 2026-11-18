@@ -91,7 +91,9 @@ class LaneTest(unittest.TestCase):
         hw = {"sdr_serial": "MAIN01"}
         self.assertIn(":MAIN01", sdr.build_decode({}, "stealth", None, hw)[0])
         self.assertIn(":MAIN01", tpms.window_argv("315M", 50, hw))
-        self.assertIn(":MAIN01", rf_floor.sweep_argv("433", hw=hw))
+        argv = rf_floor.sweep_argv("433", hw=hw)
+        self.assertEqual(argv[1:3], ["-d", "MAIN01"])          # librtlsdr: bare serial
+        self.assertEqual(sdr.build_survey({}, "s", None, hw)[0][1:3], ["-d", "MAIN01"])
         with self.assertRaises(ValueError):
             sdr.dev_args({"sdr_serial": "x; rm"})
 
@@ -134,3 +136,63 @@ class BaselineApiTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTest6(unittest.TestCase):
+    def test_known_host_taking_gateway_is_spoof(self):
+        from havokbox.baseline import drift
+        rows = [{"space": "wired", "key": "aa:00:00:00:00:01", "attrs": {"kind": "host", "ip": "10.10.0.1", "ips": ["10.10.0.1"]}, "id": 1},
+                {"space": "wired", "key": "aa:00:00:00:00:05", "attrs": {"kind": "host", "ip": "10.10.0.5", "ips": ["10.10.0.5"]}, "id": 2}]
+        inv = {"wired": {"aa:00:00:00:00:05": {"kind": "host", "ip": "10.10.0.5", "ips": ["10.10.0.5", "10.10.0.1"], "weak": False}}}
+        items = drift(inv, rows, gateway_ip="10.10.0.1")
+        self.assertTrue(any(i["kind"] == "arp_spoof" and i["severity"] == "high" for i in items), items)
+
+    def test_same_capture_conflict_on_gateway_is_high(self):
+        from havokbox.baseline import drift, inventory
+        f = {"kind": "hosts", "space": "wired", "created": 1, "data": {"hosts": [{"ip": "10.10.0.1", "mac": "aa:00:00:00:00:01"}],
+             "anomalies": [{"type": "arp_conflict", "ip": "10.10.0.1", "macs": ["aa:00:00:00:00:01", "bb:00:00:00:00:66"]}]}}
+        rows = [{"space": "wired", "key": "aa:00:00:00:00:01", "attrs": {"kind": "host", "ip": "10.10.0.1"}, "id": 1}]
+        items = drift(inventory([f]), rows, gateway_ip="10.10.0.1")
+        self.assertTrue(any(i["kind"] == "arp_spoof" for i in items), items)
+
+    def test_drone_ids_hidden_unless_alerted(self):
+        from havokbox.server import Handlers
+        from havokbox.wardrive.remoteid import DroneTracker
+        class W:  # minimal wardrive stand-in
+            plain = {}
+            drones = DroneTracker()
+        W.drones.update("d0:00:00:00:00:09", [{"type": "basic_id", "ua_id": "SERIAL123"},
+                                               {"type": "location", "lat": 27.9, "lon": -82.4, "alt": 50, "speed": 3}], 1e9)
+        import time
+        W.drones._d["d0:00:00:00:00:09"]["last_seen"] = time.time()
+        out = Handlers._drones(W())
+        self.assertNotIn("SERIAL123", json.dumps(out))
+        self.assertNotIn("d0:00", json.dumps(out))
+
+    def test_stored_advice_has_no_names(self):
+        from havokbox.wardrive.service import WardriveService
+        self.assertNotIn("John", WardriveService._advice("wifi", "ap", False, None))
+        self.assertIn("John", WardriveService._advice("wifi", "ap", False, "John's iPhone"))
+
+    def test_ais_refused_during_drive(self):
+        h, store, *_ = make()
+        h.cfg.hw = {"sdr2_serial": "ADSB01"}
+        class WD:
+            def running(self): return True
+        h.wardrive = WD()
+        self.assertEqual(h.scan({"space": "sdr2", "action": "ais"})[0], 409)
+        store.close()
+
+
+class TpmsExposureBandTest(GuardTest):
+    def test_315_sensor_reaches_exposure_despite_alternation(self):
+        self.wd.start()
+        self.wd.gps.update({"class": "TPV", "ts": self.wall[0], "lat": 27.95, "lon": -82.46, "mode": 3, "speed": 20})
+        for i in range(64):
+            self.run.tpms = tpms_lines(sid="0x315315") if i % 2 == 0 else ""
+            self.wd._last_floor = self.mono[0]
+            self.wd.tick_sdr()
+        self.wd.track.distance_m = 9000
+        self.wd.stop()
+        radios = {it["radio"] for it in self.wd.last_exposure["items"]}
+        self.assertIn("tpms", radios)

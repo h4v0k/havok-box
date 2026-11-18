@@ -31,7 +31,9 @@ DEFAULT_HW = {
     "kismet_log_dir": "/data/havokbox/kismet",   # Kismet's log_prefix (kismetdb files)
     # RTL-SDR dongles by serial (set with rtl_eeprom -s). Empty = device 0 (single-dongle boxes).
     "sdr_serial": "",       # main dongle: TPMS, rtl_433, rtl_power
-    "sdr2_serial": "",      # optional second dongle: ADS-B / AIS  # Sniffle checkout (python_cli/sniff_receiver.py)
+    "sdr2_serial": "",      # optional second dongle: ADS-B / AIS
+    "ais_device_index": None,   # AIS-catcher selects by index (-d:N), not serial
+    "tmpfs_dir": "/run/havokbox",   # scratch for readsb JSON (RAM, not the data partition)  # Sniffle checkout (python_cli/sniff_receiver.py)
     "work_dir": "/data/havokbox/work",
 }
 

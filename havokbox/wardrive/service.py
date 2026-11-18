@@ -147,7 +147,7 @@ class WardriveService:
         self._last_floor = None
         self._sdr_i = 0
         # exposure accumulator (Phase 6 #1-#3): radio -> windows while moving + devices heard
-        self._expo = {r: {"windows": 0, "devs": {}} for r in ("wifi", "ble", "tpms")}
+        self._expo = {r: {"windows": 0, "devs": {}} for r in ("wifi", "ble")}   # tpms_<band> added lazily
 
     # ---- lifecycle ---------------------------------------------------------
     def _sample(self) -> None:
@@ -264,6 +264,14 @@ class WardriveService:
                 self._alert("drone", "medium", key, addr,
                             f"A drone has stayed within 300 m for {int(dwell // 60)} min")
 
+    def _trim_plain(self):
+        """After a drive only devices that raised an alert keep a plaintext id in RAM."""
+        try:
+            alerted = {r["dev_key"] for r in self.db.query("SELECT DISTINCT dev_key FROM alerts")}
+        except Exception:
+            alerted = set()
+        self.plain = {k: v for k, v in self.plain.items() if k in alerted}
+
     def _safe_exposure(self):
         try:
             self.build_exposure()
@@ -330,6 +338,7 @@ class WardriveService:
                 for t in self._threads:
                     t.join(timeout=10)
             self._clean_ble_scratch()
+            self._trim_plain()
             self.db.end_session(self.sid, status, self.track.distance_m if self.track else 0, self.wall())
             self._note(f"session {self.sid} {status}, "
                                        f"{(self.track.distance_m if self.track else 0) / 1000:.1f} km")
@@ -432,6 +441,7 @@ class WardriveService:
         # RAM only, capped; cleared at stop except for devices that raised an alert (Phase 6 #2)
         if key in self.plain or len(self.plain) < 5000:
             self.plain[key] = dev_id.lower()
+        self._seen_keys = getattr(self, "_seen_keys", set())
         if self._early():
             self.present_at_start.add(key)
         return {"radio": radio, "dev_key": key, "ts": ts, "rssi": rssi, "lat": lat, "lon": lon,
@@ -488,7 +498,9 @@ class WardriveService:
     def tick_kismet(self) -> None:
         fix = self.gps.fix()
         obs = []
-        for d in kismet_poll.parse_devices(self.runner(kismet_poll.devices_argv(self.hw), 15)):
+        raw = self.runner(kismet_poll.devices_argv(self.hw, since_s=KISMET_EVERY_S), 15)
+        ok = bool(raw and raw.strip().startswith(("[", "{")))
+        for d in kismet_poll.parse_devices(raw):
             if not d.get("dev_id"):
                 continue
             # Where WE are now (Kismet's location is a lifetime average) and OUR time base, so
@@ -496,7 +508,7 @@ class WardriveService:
             obs.append(self._obs("wifi", d.get("kind"), d["dev_id"], d.get("rssi"), fix.get("lat"),
                                  fix.get("lon"), self._now(fix), name=d.get("name")))
         self._store_obs(obs)
-        if obs:
+        if ok:   # a successful poll is a window even when nothing was heard
             self._expo_window("wifi", [{"dev_key": o["dev_key"], "plain": self.plain.get(o["dev_key"]),
                                         "name": o.get("name"), "kind": o.get("kind")} for o in obs])
         for a in kismet_poll.parse_alerts(self.runner(kismet_poll.alerts_argv(self.hw), 15)):
@@ -508,8 +520,11 @@ class WardriveService:
                 self.hw.get("sniffle_dir", ""), "--port", self.hw.get("sniffle_port", ""),
                 "--seconds", str(BLE_WINDOW_S), "--work-dir", self.hw.get("work_dir", "")]
         out = self.runner(argv, BLE_WINDOW_S + 30)
+        ble_ok = False
         try:
-            devices = json.loads(out).get("devices", []) if out else []
+            parsed = json.loads(out) if out else None
+            devices = parsed.get("devices", []) if isinstance(parsed, dict) else []
+            ble_ok = isinstance(parsed, dict) and not parsed.get("error")
         except (ValueError, AttributeError):
             devices = []
         fix = self.gps.fix()
@@ -517,7 +532,7 @@ class WardriveService:
         obs = [self._obs("ble", None, d["addr"], d.get("rssi"), fix.get("lat"), fix.get("lon"),
                          ts, tclass=trackers.classify(d)) for d in devices if d.get("addr")]
         self._store_obs(obs)
-        if devices:
+        if ble_ok:
             by_addr = {d["addr"].lower(): d for d in devices if d.get("addr")}
             self._expo_window("ble", [{"dev_key": o["dev_key"], "plain": self.plain.get(o["dev_key"]),
                                        "name": (by_addr.get(self.plain.get(o["dev_key"]) or "") or {}).get("name"),
@@ -548,7 +563,7 @@ class WardriveService:
         """One completed window while moving: count it and every device heard in it."""
         if self.mode != "drive" or not self._moving():
             return
-        acc = self._expo[radio]
+        acc = self._expo.setdefault(radio, {"windows": 0, "devs": {}})
         acc["windows"] += 1
         for d in devices:
             key = d["dev_key"]
@@ -593,14 +608,18 @@ class WardriveService:
                 if radio == "ble" and e["random"]:
                     rotating += 1          # can't be "yours" by id: count only
                     continue
-                self.db.add_candidate(radio, key, self.sid)
-                drives = self.db.candidate_sessions(radio, key)
+                cand_radio = "tpms" if radio.startswith("tpms") else radio
+                self.db.add_candidate(cand_radio, key, self.sid)
+                drives = self.db.candidate_sessions(cand_radio, key)
                 static = not (radio == "ble" and e["random"])
-                entry = {"radio": radio, "class": e.get("kind") or radio,
+                disp = "tpms" if radio.startswith("tpms") else radio
+                entry = {"radio": disp, "class": e.get("kind") or disp,
                          "identifier": "static" if static else "rotating", "dev_key": key,
                          "drives": drives, "yours": key in mine,
-                         "advice": self._advice(radio, e.get("kind"), e["random"], e.get("name"))}
-                live.append({**entry, "id": e.get("plain"), "name": e.get("name"),
+                         # stored advice is name-free: a passenger's "John's iPhone" never lands on disk
+                         "advice": self._advice(disp, e.get("kind"), e["random"], None)}
+                live.append({**entry, "advice": self._advice(disp, e.get("kind"), e["random"], e.get("name")),
+                             "id": e.get("plain"), "name": e.get("name"),
                              "note": None if key in mine else
                              ("rode along in 2+ drives — mark as yours" if drives >= 2
                               else "may be a passenger's")})
@@ -633,8 +652,9 @@ class WardriveService:
             self._tpms_heard[o["dev_key"]][freq] += 1
             obs.append(o)
         self._store_obs(obs)
-        self._expo_window("tpms", [{"dev_key": o["dev_key"], "plain": self.plain.get(o["dev_key"]),
-                                    "kind": "tpms"} for o in obs])
+        # per band: a 315 MHz sensor is judged against 315 MHz windows only (review #6)
+        self._expo_window(f"tpms_{freq}", [{"dev_key": o["dev_key"], "plain": self.plain.get(o["dev_key"]),
+                                            "kind": "tpms"} for o in obs])
 
     def tick_sdr(self) -> None:
         if self._last_floor is None or self.mono() - self._last_floor >= 600:

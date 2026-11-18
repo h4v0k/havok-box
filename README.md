@@ -43,6 +43,13 @@ trusted CA, open `https://<box>:8443/guard.html` and enter `guard_token` (it rea
 screen). Turn on Android "Stay awake while charging". Phone alerts: set `HAVOKBOX_DISCORD_WEBHOOK`
 (env only); add `guard_quiet_zones` for home/work. Camera data: Report → refresh, or
 `POST /api/alpr/refresh` while online. Design: `docs/design-drive-guard.md`.
+Phase 6 extras: set dongle serials with `rtl_eeprom -s` and put them in `hw.sdr_serial` /
+`hw.sdr2_serial` (ADS-B/AIS get their own lane only with a second dongle); AIS-catcher picks a
+dongle by index (`hw.ais_device_index`). Rayhunter: tether the Orbic over USB and set
+`rayhunter_url` (e.g. `http://192.168.1.1:8080`). Baseline drift: set `lab_gateway` (and
+`pinned_static`), scan the lab, then Recon → Learn baseline. Site survey: Recon → Wi-Fi site survey.
+Formats still to confirm on hardware: Remote ID offsets, readsb `--device` serial, AIS-catcher `-o 5`,
+Rayhunter endpoints. Design: `docs/design-phase6.md`.
 Snapshot publishing (Phase 2): deploy the Worker in `cloudflare/` (see its README), set
 `publish_url` in `config/box.json` and `HAVOKBOX_PUBLISH_TOKEN` in the watchdog's environment. Publishing
 waits until the clock is NTP-synced (the Pi has no RTC battery). Then use Report → Publish.

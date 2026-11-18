@@ -24,7 +24,7 @@ def _seconds(t) -> int:
 
 def build_adsb(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
     return [["python3", "-m", "havokbox.helpers.adsb", "--device", _serial(hw) or "0",
-             "--seconds", str(_seconds(target)), "--work-dir", hw["work_dir"]]]
+             "--seconds", str(_seconds(target)), "--work-dir", hw.get("tmpfs_dir") or "/run/havokbox"]]
 
 
 def parse_adsb(stdout: str) -> list[dict]:
@@ -54,11 +54,11 @@ def adsb(task: dict, ctx) -> dict:
 
 
 def build_ais(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
-    serial = _serial(hw)
-    # UNCONFIRMED on device: "-o 5" is believed to select full JSON-per-message on stdout; "-d:SERIAL"
-    # selects the dongle by serial. Check `AIS-catcher -h` on the Pi. timeout bounds the run.
-    return [["timeout", str(_seconds(target)), "AIS-catcher"]
-            + (["-d:" + serial] if serial else []) + ["-o", "5"]]
+    # AIS-catcher's "-d:N" selects by DEVICE INDEX, not serial, so the index is configured
+    # explicitly (hw.ais_device_index). UNCONFIRMED on device: "-o 5" = JSON per message on stdout.
+    idx = (hw or {}).get("ais_device_index")
+    dev = ["-d:" + str(int(idx))] if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < 8 else []
+    return [["timeout", str(_seconds(target)), "AIS-catcher"] + dev + ["-o", "5"]]
 
 
 def _num(v, bad):

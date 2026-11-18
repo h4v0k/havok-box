@@ -409,7 +409,7 @@ function renderDrive(d) {
     ex.rotating_ble ? el("p", { class: "hint", text: `Plus ${ex.rotating_ble} Bluetooth device(s) using rotating addresses (harder to track).` }) : null]
     : [el("p", { class: "empty", text: "Shows after a drive of 5 km or more: what the car broadcasts that someone could use to follow it." })]));
   $("#wd-drones").replaceChildren(...((d.drones || []).length ? d.drones.map((dr) => el("li", {},
-    el("span", { class: "k", text: "Drone" }), dr.ua_id || "unknown ID",
+    el("span", { class: "k" + (dr.alerted ? " sev-medium" : ""), text: "Drone" }), dr.label,
     el("div", { class: "hint", text: [dr.alt != null ? `${Math.round(dr.alt)} m up` : null, dr.speed != null ? `${Math.round(dr.speed)} m/s` : null, dr.operator_known ? "operator position broadcast" : null].filter(Boolean).join(" · ") })))
     : [el("p", { class: "empty", text: "No Remote ID broadcasts heard (BLE add-on modules only; most DJI drones use Wi-Fi)." })]));
   $("#wd-sessions").replaceChildren(...(d.sessions || []).filter((x) => x.status !== "running").map((x) => el("article", { class: "finding" },
@@ -475,7 +475,7 @@ function renderSurvey(d) {
     if (bss.length > 1) setup.append(el("div", { class: "row" }, bss.map((b) =>
       el("button", { type: "button", class: "btn" + (b === svBssid ? " primary" : ""), onclick: () => { svBssid = b; renderSurvey(sv); } }, b))));
     const [w, h] = heat ? heat.grid : [running.grid_w, running.grid_h];
-    const readOnly = !running;
+    const readOnly = !running || (d.view && heat && d.survey !== running.id);
     const cells = {};
     for (const c of (heat ? heat.cells : [])) if (c.bssid === svBssid) cells[`${c.x},${c.y}`] = c.median_rssi;
     grid.style.gridTemplateColumns = `repeat(${w}, 1fr)`;

@@ -107,13 +107,13 @@ class TestParse(unittest.TestCase):
         self.assertEqual(len(p["rows"]), 2)
         a, b = p["rows"]
         self.assertEqual((a["analyzer"], a["severity"], len(a["message"])), ("Null Cipher", "high", 200))
-        self.assertEqual((b["analyzer"], b["severity"]), ("IMSI Requested", "medium"))
+        self.assertEqual((b["analyzer"], b["severity"]), ("IMSI Requested", "info"))   # informational
 
     def test_severity_map(self):
         rows = [{"packet_timestamp": "t%d" % i, "events": [{"event_type": {"severity": s}, "message": "m"}]}
                 for i, s in enumerate(["High", "Medium", "Low", "Informational", "Weird", None])]
         sev = [r["severity"] for r in R.parse_report(nd(rows=rows))["rows"]]
-        self.assertEqual(sev, ["high"] + ["medium"] * 5)
+        self.assertEqual(sev, ["high", "medium", "medium", "info", "medium", "medium"])
 
     def test_defensive(self):
         txt = "\n".join(["{}", "garbage", "[1]", '{"events":"no"}', '{"events":[1,"a",{}]}'])
@@ -131,9 +131,10 @@ class TestPoller(unittest.TestCase):
         p = self.poller(ROUTES)
         self.assertIn("not been checked", p.status_text())
         r = p.poll()
-        self.assertEqual((r["status"], r["version"], r["entry"], len(r["new"])), ("ok", "2", "1700000099", 2))
+        # the informational row is not an alert
+        self.assertEqual((r["status"], r["version"], r["entry"], len(r["new"])), ("ok", "2", "1700000099", 1))
         self.assertEqual(p.poll()["new"], [])
-        self.assertIn("2 warning", p.status_text())
+        self.assertIn("1 warning", p.status_text())
         self.assertNotIn("all clear", p.status_text())
 
     def test_all_clear_only_when_ok_and_empty(self):
@@ -147,7 +148,10 @@ class TestPoller(unittest.TestCase):
         p.poll()
         routes["/api/qmdl-manifest"] = json.dumps({"current_entry": "1700000200"})
         routes["/api/analysis-report/1700000200"] = nd()
-        self.assertEqual(len(p.poll()["new"]), 2)
+        r = p.poll()
+        self.assertEqual(len(r["new"]), 1)
+        self.assertTrue(r.get("restarted"))
+        self.assertIn("new recording", p.status_text())
 
     def test_unreachable(self):
         p = self.poller({"/api/qmdl-manifest": R.RayhunterError("down")})
@@ -170,7 +174,7 @@ class TestPoller(unittest.TestCase):
         meta = dict(META, report_version=99)
         p = self.poller({**ROUTES, "/api/analysis-report/1700000099": nd(meta=meta)})
         r = p.poll()
-        self.assertEqual((r["status"], len(r["new"])), ("unknown_version", 2))
+        self.assertEqual((r["status"], len(r["new"])), ("unknown_version", 1))   # informational row skipped
         self.assertNotIn("all clear", p.status_text())
 
 

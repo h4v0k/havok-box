@@ -134,7 +134,9 @@ class SurveyService:
         try:
             targets = cur["bssids"]
             samples = {b: [] for b in targets}
-            last_ts = {b: None for b in targets}
+            # first sample must be heard AFTER the tap (Kismet's lookback could carry the last cell)
+            tapped = self.clock()
+            last_ts = {b: tapped for b in targets}
             deadline = self.mono() + DWELL_S
             while True:
                 raw = self.runner(kismet_poll.devices_argv(self.hw, since_s=5), 10)
@@ -152,6 +154,9 @@ class SurveyService:
                     break
                 self.sleep(POLL_S)
             out, now = {}, self.clock()
+            with self._mu:
+                if self._current is None or self._current["id"] != cur["id"]:
+                    raise SurveyError("survey was stopped during the measurement")
             for b in targets:
                 v = samples[b]
                 if len(v) >= MIN_SAMPLES:

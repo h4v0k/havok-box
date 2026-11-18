@@ -93,7 +93,12 @@ class RayhunterClient:
     def report(self, entry: str) -> str:
         if not isinstance(entry, str) or not _ENTRY_RE.match(entry):
             raise RayhunterError("bad entry name")
-        return self._get(REPORT_PREFIX + entry)
+        # reports grow over a long recording: allow more than the manifest cap
+        cap, self.max_bytes = self.max_bytes, max(self.max_bytes, REPORT_MAX_BYTES)
+        try:
+            return self._get(REPORT_PREFIX + entry)
+        finally:
+            self.max_bytes = cap
 
 
 # ---------------------------------------------------------------- parsing
@@ -125,7 +130,12 @@ def parse_manifest(text: str) -> dict:
 
 
 def _severity(v) -> str:
-    return "high" if v == "High" else "medium"
+    """Fixed mapping (resolution #5). Informational events are never alerts."""
+    if v == "High":
+        return "high"
+    if v in ("Informational", "Info"):
+        return "info"
+    return "medium"
 
 
 def _events(row: dict):
@@ -171,6 +181,9 @@ def parse_report(ndjson: str) -> dict:
 
 # ---------------------------------------------------------------- poller
 
+REPORT_MAX_BYTES = 8_000_000
+
+
 class RayhunterPoller:
     def __init__(self, client, clock):
         self.client = client
@@ -179,6 +192,8 @@ class RayhunterPoller:
         self.last = {"status": "unreachable", "version": None, "entry": None, "new": [], "at": None}
         self._warnings = 0
         self._polled = False
+        self._entry = None
+        self._parsed_upto = 0          # rows of the current entry already parsed
 
     def poll(self) -> dict:
         res = {"status": "unreachable", "version": None, "entry": None, "new": []}
@@ -189,12 +204,18 @@ class RayhunterPoller:
                 res["status"] = "not_recording"
                 res["version"] = man["version"]
             else:
-                rep = parse_report(self.client.report(man["current_entry"]))
+                entry = man["current_entry"]
+                if self._entry is not None and entry != self._entry:
+                    res["restarted"] = True    # new recording: device rebooted or recording restarted
+                    self._parsed_upto, self._warnings = 0, 0
+                self._entry = entry
+                rep = parse_report(self.client.report(entry))
                 res["version"] = rep["report_version"]
                 res["status"] = "ok" if rep["report_version"] in KNOWN_REPORT_VERSIONS else "unknown_version"
-                entry = man["current_entry"]
-                self._warnings = len(rep["rows"])
-                for r in rep["rows"]:
+                rows = [r for r in rep["rows"] if r.get("severity") != "info"]
+                fresh, self._parsed_upto = rows[self._parsed_upto:], len(rows)   # only new rows
+                self._warnings = len(rows)
+                for r in fresh:
                     k = (entry, r["ts"], r["analyzer"])
                     if k not in self._seen:
                         self._seen.add(k)
@@ -214,6 +235,8 @@ class RayhunterPoller:
             return "Rayhunter is unreachable, so cell tower status is unknown."
         if st == "not_recording":
             return "Rayhunter is not recording, so cell tower status is unknown."
+        if self.last.get("restarted"):
+            return "Rayhunter started a new recording (device rebooted or restarted); watching the new one."
         if st == "unknown_version":
             return "Rayhunter report version is not recognised; results are shown but cannot be trusted."
         if self._warnings:
