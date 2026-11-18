@@ -29,26 +29,18 @@
     </div>
   </header>
 
-  <nav class="phases" aria-label="Attack path phase">
-    <ol>
-      <li data-phase="recon">Recon</li>
-      <li data-phase="enumerate">Enumerate</li>
-      <li data-phase="test">Test</li>
-      <li data-phase="report">Report</li>
-    </ol>
+  <nav class="phases" role="tablist" aria-label="Attack path phase">
+    <button type="button" role="tab" data-tab="recon" aria-selected="true">Recon</button>
+    <button type="button" role="tab" data-tab="enumerate" aria-selected="false">Enumerate</button>
+    <button type="button" role="tab" data-tab="test" aria-selected="false">Test</button>
+    <button type="button" role="tab" data-tab="report" aria-selected="false">Report</button>
+    <button type="button" role="tab" data-tab="console" aria-selected="false" hidden>Console</button>
   </nav>
 
   <div id="status" class="status" aria-live="polite"></div>
 
-  <nav class="tabs" role="tablist">
-    <button type="button" role="tab" data-tab="path" aria-selected="true">Attack path</button>
-    <button type="button" role="tab" data-tab="evidence" aria-selected="false">Evidence</button>
-    <button type="button" role="tab" data-tab="console" aria-selected="false" hidden>Console</button>
-  </nav>
-
   <main>
-    <section id="tab-path">
-      <h2>Recon</h2>
+    <section id="tab-recon">
       <div class="cards">
         <article class="card">
           <h3>Wired / IP</h3>
@@ -62,21 +54,29 @@
           <button type="button" class="btn primary big" data-scan="wifi">Scan Wi-Fi</button>
           <p class="hint">Passive listen. Flags rogue APs and evil twins.</p>
         </article>
-        <article class="card off"><h3>BLE</h3><p class="sub">SONOFF · Sniffle</p><button type="button" class="btn big" disabled>Scan BLE</button><p class="hint">Phase 3</p></article>
-        <article class="card off"><h3>Sub-GHz</h3><p class="sub">Flipper Zero</p><button type="button" class="btn big" disabled>Scan sub-GHz</button><p class="hint">Phase 3</p></article>
-        <article class="card off"><h3>Wideband RX</h3><p class="sub">RTL-SDR</p><button type="button" class="btn big" disabled>Spectrum survey</button><p class="hint">Phase 3</p></article>
       </div>
-
       <h2>Findings</h2>
-      <div id="findings"><p class="empty">No findings yet. Start with a recon card above.</p></div>
-
-      <h2>Report</h2>
-      <div class="card off"><button type="button" class="btn big" disabled>Generate report</button><p class="hint">Read-only Cloudflare snapshot — Phase 2</p></div>
+      <div id="findings"></div>
     </section>
 
-    <section id="tab-evidence" hidden>
+    <section id="tab-enumerate" hidden>
+      <h2>Enumerate</h2>
+      <p class="hint">Look closer at what recon found. Active scans need your approval.</p>
+      <div id="enumerate-list" class="steps"></div>
+    </section>
+
+    <section id="tab-test" hidden>
+      <h2>Test</h2>
+      <p class="hint">Active checks of a control. Every one needs its own approval.</p>
+      <div id="test-list" class="steps"></div>
+    </section>
+
+    <section id="tab-report" hidden>
+      <h2>Findings timeline</h2>
+      <ol id="timeline" class="evidence"></ol>
       <h2>Evidence log</h2>
       <ol id="evidence" class="evidence"></ol>
+      <p class="hint">Publishing a read-only Cloudflare snapshot arrives in Phase 2.</p>
     </section>
 
     <section id="tab-console" hidden>
@@ -98,7 +98,7 @@
       <dt>Mode</dt><dd id="sheet-mode"></dd>
       <dt>Exact command</dt><dd><pre id="sheet-cmd"></pre></dd>
     </dl>
-    <p id="sheet-why" class="hint"></p>
+    <p id="sheet-note" class="hint" role="alert"></p>
     <p class="warn">This is an active action against the target. It runs as soon as you tap and can't be undone.</p>
     <div class="sheet-actions">
       <button type="button" id="sheet-cancel" class="btn big">Cancel</button>

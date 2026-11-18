@@ -26,12 +26,13 @@ SERVER_CMD = [sys.executable, "-m", "havokbox.server"]
 
 def console_cmd(cfg: BoxConfig) -> list[str] | None:
     """ttyd on the box-LAN interface with its own password. None = don't run."""
-    if not cfg.console_enabled or not cfg.console_password:
-        return None
+    if not cfg.console_enabled or not cfg.console_password or not cfg.tls_ready():
+        return None   # off by default; needs its own password AND TLS (design-check #10)
     # Own credential, never the dashboard token (ttyd's -c is visible in /proc/*/cmdline).
     # -O: reject cross-origin websocket upgrades. Restrict :console_port to box-LAN clients with
     # the nftables rule in docs/console.md — ttyd itself can only bind an interface.
-    return ["ttyd", "-W", "-O", "-i", cfg.console_iface, "-p", str(cfg.console_port),
+    return ["ttyd", "-W", "-O", "-S", "-C", cfg.tls_cert, "-K", cfg.tls_key,
+            "-i", cfg.console_iface, "-p", str(cfg.console_port),
             "-c", f"havok:{cfg.console_password}", sys.executable, "-m", "havokbox.console_session"]
 
 
@@ -41,7 +42,9 @@ class Watchdog:
                  backoff_s: float = 2.0):
         self.cfg = cfg
         self.store_factory = store_factory or (lambda: Store(cfg.db_path))
-        self.spawn = spawn or (lambda cmd: subprocess.Popen(cmd))
+        # Each child gets its own process group so the whole group (incl. nmap children) dies
+        # with it (design-check #9).
+        self.spawn = spawn or (lambda cmd: subprocess.Popen(cmd, start_new_session=True))
         self.clock = clock
         self.sleep = sleep
         self.poweroff = poweroff
@@ -96,7 +99,9 @@ class Watchdog:
             if len(self.restarts) > self.max_restarts:
                 self.shutdown(f"crash loop: {len(self.restarts)} restarts in {self.window_s:.0f}s")
                 return False
-            # The dead process can't write; void before the new one comes up (fail-closed).
+            # Kill any tool children the dead server left behind, then void before the new one
+            # comes up (fail-closed).
+            self._stop(self.server)
             self._void(f"server exited ({self.server.poll()}), restarting")
             self.sleep(self.backoff_s)
             self.server = self.spawn(SERVER_CMD)
@@ -106,14 +111,30 @@ class Watchdog:
         return True
 
     @staticmethod
-    def _stop(proc, grace: float = 10.0) -> None:
-        if proc is None or proc.poll() is not None:
+    def _signal_group(proc, sig) -> bool:
+        pid = getattr(proc, "pid", None)
+        if not isinstance(pid, int):
+            return False
+        try:
+            os.killpg(pid, sig)   # pgid == pid because of start_new_session
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+    @classmethod
+    def _stop(cls, proc, grace: float = 10.0) -> None:
+        if proc is None:
             return
-        proc.terminate()
+        if proc.poll() is not None:
+            cls._signal_group(proc, signal.SIGKILL)   # leader gone; reap orphaned tool children
+            return
+        if not cls._signal_group(proc, signal.SIGTERM):
+            proc.terminate()
         try:
             proc.wait(timeout=grace)
         except Exception:
-            proc.kill()
+            if not cls._signal_group(proc, signal.SIGKILL):
+                proc.kill()
 
     def shutdown(self, reason: str) -> None:
         if self.stopped:

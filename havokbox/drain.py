@@ -1,26 +1,33 @@
-"""Offline drain loop (req 7).
+"""Offline drain loop (req 7; design-check #6, #7, #8).
 
 Findings never wait on the API. Each new finding's digest is queued; when the box is online this
-loop sends the digest to the API commander, sanitises what comes back, and writes the proposals.
-The LAST write of an entry goes through store.drain(), which inserts the proposal and marks the
-entry done in one transaction — a crash before commit just re-drains, and INSERT OR IGNORE on
-(result_id, step_kind) makes the repeat a no-op.
+loop sends the digest to the API commander, rebuilds what comes back through tasks.make_task, and
+writes the survivors with store.drain_many — every proposal plus "entry done" in ONE transaction.
+A crash before commit just re-drains, and INSERT OR IGNORE on (result_id, step_kind) makes the
+repeat a no-op. step_kind is derived from tool + canonical target, so a commander proposal that
+duplicates a planner one lands on the same row.
 
-Sanitising means the commander can only ever add a button: the tool must be registered, the
-category is forced to the tool's true category, params are validated and stripped to the spec,
-the target is pre-checked against the scope gate, and the task gets a fresh id (so a model can't
-aim at an existing approval). Running it still needs the orchestrator + gate + approval.
+The commander can only ever add a button: tool must be registered, category comes from the
+registry, unknown target keys are rejected, the target is pre-checked against the scope gate, the
+id is fresh and the label is generated in code. Running it still needs the orchestrator + gate +
+a digest-bound approval.
+
+Retries are bounded: an API/parse error backs off (30s, 60s, 120s ...) and the entry is marked
+failed after MAX_ATTEMPTS. A reply with zero valid proposals still marks the entry done.
 """
 from __future__ import annotations
 
 import json
 import socket
 import threading
+import time
 
 from .commander import SpendCapReached
 from .scope import Gate
-from .store import new_id
-from .tools import validate_params
+from .tasks import TaskError, make_task
+
+MAX_ATTEMPTS = 5
+BASE_BACKOFF_S = 30
 
 
 def default_online(host: str = "api.anthropic.com", port: int = 443, timeout: float = 3.0) -> bool:
@@ -32,38 +39,48 @@ def default_online(host: str = "api.anthropic.com", port: int = 443, timeout: fl
 
 
 class Drainer:
-    def __init__(self, store, commander, registry: dict, scope, online=default_online):
+    def __init__(self, store, commander, registry: dict, scope, online=default_online,
+                 clock=time.monotonic):
         self.store = store
         self.commander = commander
         self.registry = registry
         self.gate = Gate(scope)
         self.online = online
+        self.clock = clock
         self._stop = threading.Event()
         self._capped_logged = False
+        self._attempts: dict[int, int] = {}     # queue id -> failed attempts (in memory)
+        self._next_try: dict[int, float] = {}   # queue id -> earliest retry time
 
     # ---- sanitise ---------------------------------------------------------
     def sanitise(self, raw: dict, digest: dict) -> dict | None:
-        spec = self.registry.get(raw.get("tool"))
-        if spec is None:
+        if not isinstance(raw, dict):
             return None
-        target = raw.get("target") if isinstance(raw.get("target"), dict) else {}
-        target = {k: v for k, v in target.items() if k in spec.params}
-        ok, _ = validate_params(spec, target)
-        if not ok:
+        try:
+            task = make_task(self.registry, raw.get("tool"), raw.get("target"),
+                             digest.get("mode") or "stealth", digest["result_id"],
+                             suggested=False, source="commander")
+        except TaskError as exc:
+            self.store.log("refused", f"commander proposal dropped: {exc}")
             return None
-        task = {"category": spec.category, "tool": spec.name, "target": target}
         decision = self.gate.evaluate(task)
         if not decision.allowed:
-            self.store.log("refused", f"commander proposal out of scope: {spec.name} {target}: "
+            self.store.log("refused", f"commander proposal out of scope: {task['step_kind']}: "
                                       f"{decision.reason}")
             return None
-        label = str(raw.get("label") or spec.name)[:80]
-        step = "ai:" + spec.name + ":" + json.dumps(target, sort_keys=True)
-        task.update({"id": new_id(), "step_kind": step, "label": label,
-                     "why": str(raw.get("why") or "")[:240], "suggested": False,
-                     "mode": digest.get("mode") or "stealth",
-                     "_rid": digest["result_id"], "_step": step})
         return task
+
+    def _fail(self, entry_id: int, why: str) -> None:
+        n = self._attempts.get(entry_id, 0) + 1
+        self._attempts[entry_id] = n
+        if n >= MAX_ATTEMPTS:
+            self.store.drain_empty(entry_id)
+            self.store.log("commander", f"queue entry {entry_id} failed after {n} attempts: {why}")
+            self._attempts.pop(entry_id, None)
+            self._next_try.pop(entry_id, None)
+        else:
+            self._next_try[entry_id] = self.clock() + BASE_BACKOFF_S * (2 ** (n - 1))
+            self.store.log("commander", f"drain deferred ({n}/{MAX_ATTEMPTS}): {why}")
 
     # ---- one pass ---------------------------------------------------------
     def drain_once(self) -> int:
@@ -71,8 +88,9 @@ class Drainer:
         if not getattr(self.commander, "enabled", False) or not self.online():
             return 0
         done = 0
+        now = self.clock()
         for entry in self.store.pending_queue():
-            if entry["kind"] != "commander":
+            if entry["kind"] != "commander" or self._next_try.get(entry["id"], 0) > now:
                 continue
             digest = json.loads(entry["payload"])
             try:
@@ -82,24 +100,21 @@ class Drainer:
                     self.store.log("commander", str(exc))
                     self._capped_logged = True
                 break
-            except Exception as exc:  # network/API error: leave it queued, try next pass
-                self.store.log("commander", f"drain deferred: {exc}")
+            except Exception as exc:  # network/API error: back off, bounded
+                self._fail(entry["id"], str(exc))
                 break
             self._capped_logged = False
             tasks, seen = [], set()
-            for raw in raw_tasks[:3]:
+            for raw in list(raw_tasks)[:3]:
                 t = self.sanitise(raw, digest)
                 if t and t["step_kind"] not in seen:
                     seen.add(t["step_kind"])
                     tasks.append(t)
             if tasks:
                 tasks[0]["suggested"] = True
-                for t in tasks[:-1]:
-                    self.store.add_proposal(t["_rid"], t["step_kind"], t)
-                last = tasks[-1]
-                self.store.drain(entry["id"], last["_rid"], last["step_kind"], last)
-            else:
-                self.store.drain_empty(entry["id"])
+            self.store.drain_many(entry["id"], [(t["_rid"], t["_step"], t) for t in tasks])
+            self._attempts.pop(entry["id"], None)
+            self._next_try.pop(entry["id"], None)
             self.store.log("commander", f"{digest.get('summary')} -> {len(tasks)} proposal(s)")
             done += 1
         return done

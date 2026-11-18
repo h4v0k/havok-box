@@ -62,6 +62,9 @@ class WatchdogTest(unittest.TestCase):
     def test_boot_voids_unconsumed_and_starts_server(self):
         w = self.wd(); w.boot()
         self.assertEqual(set(self.approvals()), {"used-task"})
+        voided = [e for e in self.evidence() if e["kind"] == "voided"]
+        self.assertEqual(len(voided), 1)                   # written to evidence before removal
+        self.assertIn("pending-task", voided[0]["detail"])
         self.assertEqual(self.procs[0].cmd, SERVER_CMD)
         self.assertEqual(len(self.procs), 1)   # console off by default
 
@@ -94,14 +97,20 @@ class WatchdogTest(unittest.TestCase):
         self.assertFalse(w.tick())
 
     def test_console_only_when_enabled_with_token(self):
-        self.assertIsNone(console_cmd(BoxConfig(token="t", console_password="pw")))
-        self.assertIsNone(console_cmd(BoxConfig(console_enabled=True, token="t")))  # no own password
-        cmd = console_cmd(BoxConfig(console_enabled=True, token="tok", console_password="pw"))
-        self.assertEqual(cmd[:6], ["ttyd", "-W", "-O", "-i", "wlan0", "-p"])
+        cert, key = os.path.join(self.dir, "c"), os.path.join(self.dir, "k")
+        tls = dict(tls_cert=cert, tls_key=key)
+        self.assertIsNone(console_cmd(BoxConfig(token="t", console_password="pw", **tls)))
+        self.assertIsNone(console_cmd(BoxConfig(console_enabled=True, token="t", **tls)))  # no pw
+        on = BoxConfig(console_enabled=True, token="tok", console_password="pw", **tls)
+        self.assertIsNone(console_cmd(on))                 # no TLS cert -> refuses
+        open(cert, "w").close(); open(key, "w").close()
+        cmd = console_cmd(on)
+        self.assertEqual(cmd[:4], ["ttyd", "-W", "-O", "-S"])
         self.assertIn("havok:pw", cmd)
         self.assertFalse(any("tok" in c for c in cmd))     # dashboard token never on a cmdline
         self.cfg.console_enabled = True
         self.cfg.console_password = "pw"
+        self.cfg.tls_cert, self.cfg.tls_key = cert, key
         w = self.wd(); w.boot()
         self.assertEqual(self.procs[1].cmd[0], "ttyd")
         self.procs[1].rc = 0
@@ -109,6 +118,40 @@ class WatchdogTest(unittest.TestCase):
         self.assertEqual(self.procs[2].cmd[0], "ttyd")
         w.shutdown("test")
         self.assertTrue(self.procs[2].terminated)
+
+
+class ProcessGroupTest(unittest.TestCase):
+    def test_real_spawn_kills_whole_group(self):
+        import subprocess, sys, time
+        d = tempfile.mkdtemp()
+        cfg = BoxConfig(db_path=os.path.join(d, "b.db"), session_limit_s=1000)
+        # server stand-in that starts a grandchild (like nmap) and sleeps
+        script = ("import subprocess,time;"
+                  "p=subprocess.Popen(['sleep','300']);open(%r,'w').write(str(p.pid));time.sleep(300)"
+                  % os.path.join(d, "child.pid"))
+        import havokbox.watchdog as wdm
+        orig = wdm.SERVER_CMD
+        wdm.SERVER_CMD = [sys.executable, "-c", script]
+        try:
+            w = Watchdog(cfg, sleep=lambda s: None)
+            w.boot()
+            pidfile = os.path.join(d, "child.pid")
+            for _ in range(50):
+                if os.path.exists(pidfile) and open(pidfile).read():
+                    break
+                time.sleep(0.1)
+            child = int(open(pidfile).read())
+            w.shutdown("test")
+            time.sleep(0.3)
+            try:
+                os.kill(child, 0)
+                os.waitpid(child, os.WNOHANG)
+                alive = open(f"/proc/{child}/stat").read().split()[2] != "Z"
+            except (ProcessLookupError, ChildProcessError, FileNotFoundError):
+                alive = False
+            self.assertFalse(alive, "tool grandchild outlived the server")
+        finally:
+            wdm.SERVER_CMD = orig
 
 
 class ConsoleSessionTest(unittest.TestCase):

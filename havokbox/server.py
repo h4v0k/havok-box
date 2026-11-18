@@ -1,27 +1,26 @@
-"""Dashboard server: a thin FastAPI shell over `Handlers`, which holds all the logic so it is
-testable without the HTTP layer (FastAPI/uvicorn are runtime deps on the Pi only).
+"""Dashboard server: a thin Starlette shell over `Handlers`, which holds all the logic so it is
+testable without the HTTP layer (Starlette/uvicorn are runtime deps on the Pi only).
 
 Endpoints (all behind the bearer token):
-  GET  /api/state             -> dashboard state
-  POST /api/scan    {space, mode?}
+  GET  /api/state
+  POST /api/scan    {space, mode?}       -> 202 {job_id} | 200 needs_approval | 409 unavailable
   POST /api/mode    {mode}
-  POST /api/approve {task_id}
-  POST /api/run     {task_id}
-  GET  /api/console           -> console URL (only if enabled AND caller is on the box LAN)
-  /                           -> static phone UI
+  POST /api/approve {task_id, digest}    -> refused unless digest == the command shown
+  POST /api/run     {task_id}            -> 409 "approve first" unless a matching approval exists
+  GET  /api/jobs/{id}
+  GET  /api/console                      -> console URL (enabled + box LAN + TLS only)
+  /                                      -> static phone UI
 
-Tool runs go through a single background job worker: one tool at a time (one set of radios),
-and a long stealth scan never ties up the HTTP request or the dashboard.
-
-The dashboard is the ONLY writer of approvals. There is no arbitrary-command endpoint; the
-Console is the one explicit, logged escape hatch.
+Jobs run on one worker thread per lane (lane = signal space): one radio/NIC job at a time per
+space, different spaces concurrently. One process, one worker, so the store stays the single
+writer. The dashboard is the ONLY writer of approvals. There is no arbitrary-command endpoint;
+the Console is the one explicit, logged escape hatch.
 """
 from __future__ import annotations
 
 import collections
 import hmac
 import os
-import queue
 import subprocess
 import threading
 import time
@@ -33,34 +32,47 @@ SPACES = ("wired", "wifi")
 
 
 # ---------------------------------------------------------------------------
-# Job worker
+# Job runner — one worker per lane
 # ---------------------------------------------------------------------------
 class Jobs:
-    def __init__(self, store, history: int = 20, start: bool = True):
+    def __init__(self, store, history: int = 30, start: bool = True):
         self.store = store
-        self.q: queue.Queue = queue.Queue()
+        self.start = start
+        self.lanes: dict[str, collections.deque] = {}
         self.recent = collections.deque(maxlen=history)
-        self.running = None
-        self._lock = threading.Lock()
-        if start:
-            threading.Thread(target=self._loop, daemon=True, name="havokbox-jobs").start()
+        self.running: dict[str, dict] = {}
+        self._cv = threading.Condition()
 
-    def submit(self, label: str, fn) -> dict:
-        job = {"id": new_id(), "label": label, "status": "queued", "submitted": time.time()}
-        with self._lock:
+    def submit(self, label: str, fn, lane: str = "default") -> dict:
+        job = {"id": new_id(), "label": label, "lane": lane, "status": "queued",
+               "submitted": time.time()}
+        with self._cv:
             self.recent.appendleft(job)
-        self.q.put((job, fn))
+            if lane not in self.lanes:
+                self.lanes[lane] = collections.deque()
+                if self.start:
+                    threading.Thread(target=self._loop, args=(lane,), daemon=True,
+                                     name=f"havokbox-jobs-{lane}").start()
+            self.lanes[lane].append((job, fn))
+            self._cv.notify_all()
         return job
 
-    def run_one(self, timeout: float | None = None) -> bool:
-        """Run the next job (used by the loop, and directly by tests)."""
-        try:
-            job, fn = self.q.get(timeout=timeout)
-        except queue.Empty:
-            return False
-        with self._lock:
-            job["status"] = "running"
-            self.running = job
+    def pending(self) -> int:
+        with self._cv:
+            return sum(len(q) for q in self.lanes.values())
+
+    def run_one(self, lane: str | None = None) -> bool:
+        """Run the next job in `lane` (or any lane). Used by the lane loops and by tests."""
+        with self._cv:
+            for ln in ([lane] if lane else list(self.lanes)):
+                q = self.lanes.get(ln)
+                if q:
+                    job, fn = q.popleft()
+                    job["status"] = "running"
+                    self.running[ln] = job
+                    break
+            else:
+                return False
         try:
             res = fn() or {}
             job["status"] = res.get("status", "ok")
@@ -70,17 +82,27 @@ class Jobs:
             self.store.log("error", f"job {job['label']}: {exc}")
         finally:
             job["finished"] = time.time()
-            with self._lock:
-                self.running = None
+            with self._cv:
+                self.running.pop(job["lane"], None)
         return True
 
-    def _loop(self) -> None:
+    def _loop(self, lane: str) -> None:
         while True:
-            self.run_one()
+            with self._cv:
+                while not self.lanes[lane]:
+                    self._cv.wait()
+            self.run_one(lane)
+
+    def get(self, job_id: str) -> dict | None:
+        with self._cv:
+            for j in self.recent:
+                if j["id"] == job_id:
+                    return dict(j)
+        return None
 
     def snapshot(self) -> dict:
-        with self._lock:
-            return {"running": dict(self.running) if self.running else None,
+        with self._cv:
+            return {"running": [dict(j) for j in self.running.values()],
                     "jobs": [dict(j) for j in self.recent]}
 
 
@@ -105,19 +127,27 @@ class Handlers:
     def state(self) -> tuple[int, dict]:
         st = self.api.state()
         st.update(self.jobs.snapshot())
-        st["console_enabled"] = self.cfg.console_enabled
+        st["console_enabled"] = self.cfg.console_enabled_now()
         return 200, st
 
     def scan(self, body: dict) -> tuple[int, dict]:
-        space = (body or {}).get("space")
-        mode = (body or {}).get("mode") or self.api.mode
+        body = body or {}
+        space = body.get("space")
+        mode = body.get("mode") or self.api.mode
         if space not in SPACES:
             return 400, {"status": "error", "reason": f"unknown space: {space!r}"}
         if mode not in MODES:
             return 400, {"status": "error", "reason": f"unknown mode: {mode!r}"}
-        if space == "wired" and mode == "stealth":
-            return 409, self.api.scan(space, mode)      # refused up front, nothing queued
-        job = self.jobs.submit(f"Scan {space} [{mode}]", lambda: self.api.scan(space, mode))
+        prep = self.api.prepare_scan(space, mode)        # task + mode built HERE, not in the job
+        if prep["status"] == "unavailable":
+            return 409, prep
+        if prep["status"] == "refused":
+            return 403, prep
+        if prep["status"] == "needs_approval":
+            return 200, prep
+        task = prep["task"]
+        job = self.jobs.submit(f"Scan {space} [{mode}]", lambda: self.api.execute_scan(task),
+                               lane=space)
         return 202, {"status": "queued", "job_id": job["id"]}
 
     def mode(self, body: dict) -> tuple[int, dict]:
@@ -127,36 +157,47 @@ class Handlers:
         self.api.set_mode(mode)
         return 200, {"status": "ok", "mode": mode}
 
-    def _task_id(self, body) -> str | None:
-        tid = (body or {}).get("task_id")
-        return tid if isinstance(tid, str) and 0 < len(tid) <= 64 else None
+    @staticmethod
+    def _str(body, key, maxlen=64) -> str | None:
+        v = (body or {}).get(key)
+        return v if isinstance(v, str) and 0 < len(v) <= maxlen else None
 
     def approve(self, body: dict) -> tuple[int, dict]:
-        tid = self._task_id(body)
-        if not tid:
-            return 400, {"status": "error", "reason": "task_id required"}
-        res = self.api.approve(tid)
-        return (404 if res["status"] == "not_found" else 200), res
+        tid = self._str(body, "task_id")
+        dg = self._str(body, "digest")
+        if not tid or not dg:
+            return 400, {"status": "error", "reason": "task_id and digest required"}
+        res = self.api.approve(tid, dg)
+        return {"not_found": 404, "stale": 409}.get(res["status"], 200), res
 
     def run(self, body: dict) -> tuple[int, dict]:
-        tid = self._task_id(body)
+        tid = self._str(body, "task_id")
         if not tid:
             return 400, {"status": "error", "reason": "task_id required"}
-        if self.api._find_proposal(tid) is None:
+        t = self.api._find_proposal(tid)
+        if t is None:
             return 404, {"status": "not_found"}
-        job = self.jobs.submit(f"Run {tid[:8]}", lambda: self.api.run(tid))
+        if self.api.needs_approval(t) and not self.api.approval_ok(tid):
+            return 409, {"status": "error", "reason": "approve first"}   # nothing queued
+        spec = self.api.registry.get(t.get("tool"))
+        lane = getattr(spec, "space", "") or "default"
+        job = self.jobs.submit(t.get("label") or tid[:8], lambda: self.api.run(tid), lane=lane)
         return 202, {"status": "queued", "job_id": job["id"]}
 
-    def console(self, client_ip: str | None, host: str | None) -> tuple[int, dict]:
-        if not self.cfg.console_enabled:
+    def job(self, job_id: str) -> tuple[int, dict]:
+        j = self.jobs.get(job_id)
+        return (200, j) if j else (404, {"status": "not_found"})
+
+    def console(self, client_ip: str | None) -> tuple[int, dict]:
+        if not self.cfg.console_enabled_now():
             return 404, {"status": "disabled"}
         if not self.cfg.on_lan(client_ip):
             self.api.store.log("refused", f"console requested from off-LAN {client_ip}")
             return 403, {"status": "forbidden", "reason": "console is box-LAN only"}
-        if not self.cfg.console_password:
-            return 503, {"status": "error", "reason": "console_password not set"}
+        if not self.cfg.console_password or not self.cfg.tls_ready():
+            return 503, {"status": "error", "reason": "console needs console_password and TLS cert"}
         self.api.store.log("console", f"console link issued to {client_ip}")
-        return 200, {"status": "ok", "url": f"http://{self.cfg.box_address}:{self.cfg.console_port}/"}
+        return 200, {"status": "ok", "url": f"https://{self.cfg.box_address}:{self.cfg.console_port}/"}
 
 
 # ---------------------------------------------------------------------------
@@ -199,28 +240,38 @@ def build(cfg: BoxConfig | None = None):
     return Handlers(api, cfg, jobs)
 
 
+SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; "
+                               "base-uri 'none'; form-action 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+}
+
+
 def create_app(handlers: Handlers | None = None):
     from pathlib import Path
 
-    from fastapi import FastAPI, Request
-    from fastapi.responses import JSONResponse
-    from fastapi.staticfiles import StaticFiles
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+    from starlette.routing import Mount, Route
+    from starlette.staticfiles import StaticFiles
 
     h = handlers or build()
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
-    @app.middleware("http")
-    async def guard(request: Request, call_next):
-        if request.url.path.startswith("/api/") and not h.authorized(
-                request.headers.get("authorization")):
-            return JSONResponse({"status": "unauthorized"}, status_code=401)
-        resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = (
-            "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'")
-        resp.headers["X-Content-Type-Options"] = "nosniff"
-        resp.headers["Referrer-Policy"] = "no-referrer"
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
+    class Guard(BaseHTTPMiddleware):
+        async def dispatch(self, request, call_next):
+            if request.url.path.startswith("/api/") and not h.authorized(
+                    request.headers.get("authorization")):
+                resp = JSONResponse({"status": "unauthorized"}, status_code=401)
+            else:
+                resp = await call_next(request)
+            resp.headers.update(SECURITY_HEADERS)
+            return resp
 
     async def body(request: Request) -> dict:
         try:
@@ -233,41 +284,58 @@ def create_app(handlers: Handlers | None = None):
         code, payload = result
         return JSONResponse(payload, status_code=code)
 
-    @app.get("/api/state")
-    def get_state():
+    async def get_state(request):
         return reply(h.state())
 
-    @app.post("/api/scan")
-    async def post_scan(request: Request):
+    async def post_scan(request):
         return reply(h.scan(await body(request)))
 
-    @app.post("/api/mode")
-    async def post_mode(request: Request):
+    async def post_mode(request):
         return reply(h.mode(await body(request)))
 
-    @app.post("/api/approve")
-    async def post_approve(request: Request):
+    async def post_approve(request):
         return reply(h.approve(await body(request)))
 
-    @app.post("/api/run")
-    async def post_run(request: Request):
+    async def post_run(request):
         return reply(h.run(await body(request)))
 
-    @app.get("/api/console")
-    def get_console(request: Request):
-        ip = request.client.host if request.client else None
-        return reply(h.console(ip, request.headers.get("host")))
+    async def get_job(request):
+        return reply(h.job(request.path_params["job_id"]))
+
+    async def get_console(request):
+        return reply(h.console(request.client.host if request.client else None))
 
     static = Path(__file__).parent / "static"
-    app.mount("/", StaticFiles(directory=static, html=True), name="ui")
-    return app
+    routes = [
+        Route("/api/state", get_state),
+        Route("/api/scan", post_scan, methods=["POST"]),
+        Route("/api/mode", post_mode, methods=["POST"]),
+        Route("/api/approve", post_approve, methods=["POST"]),
+        Route("/api/run", post_run, methods=["POST"]),
+        Route("/api/jobs/{job_id}", get_job),
+        Route("/api/console", get_console),
+        Mount("/", StaticFiles(directory=static, html=True)),
+    ]
+    return Starlette(routes=routes, middleware=[Middleware(Guard)])
+
+
+def tls_args(cfg: BoxConfig) -> dict:
+    """TLS fails closed (design-check #5)."""
+    if cfg.tls_ready():
+        return {"ssl_certfile": cfg.tls_cert, "ssl_keyfile": cfg.tls_key}
+    if cfg.allow_insecure_http:
+        return {}
+    raise SystemExit(f"refusing to start: no TLS cert/key at {cfg.tls_cert} / {cfg.tls_key} "
+                     "(run `python3 -m havokbox.provision`, or set allow_insecure_http: true)")
 
 
 def main() -> None:  # pragma: no cover - Pi entry point
     import uvicorn
 
     cfg = BoxConfig.load()
-    uvicorn.run(create_app(build(cfg)), host="0.0.0.0", port=8080, log_level="warning")
+    ssl = tls_args(cfg)
+    uvicorn.run(create_app(build(cfg)), host="0.0.0.0", port=8443 if ssl else 8080,
+                workers=1, log_level="warning", **ssl)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -70,19 +70,20 @@ function renderMode() {
 }
 
 function renderPhase() {
+  // Highlight where the attack path is; the tabs themselves are for navigation. No counts.
   const cur = PHASES.indexOf(state.phase);
-  for (const li of $$(".phases li")) {
-    const i = PHASES.indexOf(li.dataset.phase);
-    li.classList.toggle("current", i === cur);
-    li.classList.toggle("done", i < cur);
-    if (i === cur) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
+  for (const b of $$(".phases button")) {
+    const i = PHASES.indexOf(b.dataset.tab);
+    b.classList.toggle("current", i === cur);
+    b.classList.toggle("done", i >= 0 && i < cur);
+    if (i === cur) b.setAttribute("aria-current", "step"); else b.removeAttribute("aria-current");
   }
 }
 
 function renderStatus() {
   const s = $("#status");
   s.replaceChildren();
-  if (state.running) s.append(el("span", { class: "run", text: "Running: " + state.running.label }));
+  if (state.running.length) s.append(el("span", { class: "run", text: "Running: " + state.running.map((j) => j.label).join(" · ") }));
   else {
     const last = (state.jobs || [])[0];
     if (last && last.finished) s.append(`Last: ${last.label} — ${last.status}${last.detail ? " · " + last.detail : ""}`);
@@ -115,7 +116,7 @@ function stepButton(p) {
     type: "button", class: "btn step" + (p.suggested ? " suggested" : ""),
     onclick: () => (p.needs_approval ? openSheet(p) : runPassive(p)),
   }, p.label || p.tool,
-     el("small", { text: !p.in_scope ? `Out of scope · ${p.category}`
+     el("small", { text: p.approved ? `Approved · tap to run · ${p.category}` : !p.in_scope ? `Out of scope · ${p.category}`
        : !p.runnable ? `Tool not installed yet · ${p.category}`
        : `${p.needs_approval ? "Needs approval" : "Passive"} · ${p.category}${p.source === "commander" ? " · AI" : ""}` }));
 }
@@ -126,7 +127,7 @@ function renderFindings() {
   const known = new Set(state.findings.map((f) => f.result_id));
   const waiting = state.proposals.filter((p) => !known.has(p.result_id));
   const waitBox = waiting.length ? el("article", { class: "finding" },
-    el("header", {}, el("span", { class: "sum", text: "Scans waiting for approval" })),
+    el("header", {}, el("span", { class: "sum", text: "Waiting for your approval" })),
     el("div", { class: "steps" }, waiting.map(stepButton))) : null;
   if (!fs.length && waitBox) { box.replaceChildren(waitBox); return; }
   if (!fs.length) { box.replaceChildren(el("p", { class: "empty", text: "No findings yet. Start with a recon card above." })); return; }
@@ -147,16 +148,30 @@ function renderFindings() {
   }));
 }
 
+const ACTIVE = new Set(["wifi.deauth", "wifi.inject", "rf.replay", "rf.transmit", "auth.attempt", "exploit.tool"]);
+
+function renderLists() {
+  const steps = state.proposals.slice().sort((a, b) => b.suggested - a.suggested);
+  const enumr = steps.filter((p) => p.category.startsWith("recon."));
+  const test = steps.filter((p) => ACTIVE.has(p.category));
+  $("#enumerate-list").replaceChildren(...(enumr.length ? enumr.map(stepButton)
+    : [el("p", { class: "empty", text: "Nothing to enumerate yet. Run a recon scan first." })]));
+  $("#test-list").replaceChildren(...(test.length ? test.map(stepButton)
+    : [el("p", { class: "empty", text: "No test actions proposed. Test tools arrive with later phases." })]));
+}
+
 function renderEvidence() {
+  $("#timeline").replaceChildren(...state.findings.slice().reverse().map((f) =>
+    el("li", {}, el("span", { class: "k", text: f.space }), f.summary, el("time", { text: `${fmtTime(f.created)} · ${f.mode}` }))));
   $("#evidence").replaceChildren(...state.evidence.map((e) =>
     el("li", {}, el("span", { class: "k " + e.kind, text: e.kind }), e.detail, el("time", { text: fmtTime(e.ts) }))));
 }
 
 function render() {
-  renderMode(); renderPhase(); renderStatus(); renderFindings(); renderEvidence();
+  renderMode(); renderPhase(); renderStatus(); renderFindings(); renderLists(); renderEvidence();
   $("[data-tab=console]").hidden = !state.console_enabled;
-  const busy = !!state.running;
-  for (const b of $$("[data-scan]")) b.disabled = busy || b.dataset.stealthOff === "1";
+  const busyLanes = new Set(state.running.map((j) => j.lane));
+  for (const b of $$("[data-scan]")) b.disabled = busyLanes.has(b.dataset.scan) || b.dataset.stealthOff === "1";
 }
 
 async function refresh() {
@@ -197,7 +212,7 @@ function openSheet(p) {
   $("#sheet-cat").textContent = p.category;
   $("#sheet-mode").textContent = p.mode;
   $("#sheet-cmd").textContent = p.command || "Not available — this tool isn't installed on the box yet.";
-  $("#sheet-why").textContent = p.in_scope ? (p.why || "") : "Out of scope — the gate will refuse this: " + p.gate_reason;
+  $("#sheet-note").textContent = p.in_scope ? "" : "Out of scope — the gate will refuse this: " + p.gate_reason;
   $("#sheet-run").disabled = !p.runnable;
   $("#sheet").hidden = false;
   $("#sheet-cancel").focus();
@@ -210,16 +225,17 @@ $("#sheet-run").addEventListener("click", async () => {
   const p = pending; if (!p) return;
   $("#sheet-run").disabled = true;
   try {
-    await call("POST", "/api/approve", { task_id: p.task_id });
+    // Send the digest of the exact command this sheet displayed; the box refuses if it changed.
+    if (!p.approved) await call("POST", "/api/approve", { task_id: p.task_id, digest: p.digest });
     await call("POST", "/api/run", { task_id: p.task_id });
     closeSheet();
-  } catch (e) { $("#sheet-why").textContent = "Failed: " + e.message; $("#sheet-run").disabled = false; }
+  } catch (e) { $("#sheet-note").textContent = "Failed: " + e.message + ". Close and reopen to see the current command."; $("#sheet-run").disabled = false; }
   refresh();
 });
 
 // ---- tabs + console -------------------------------------------------------
-for (const t of $$(".tabs button")) t.addEventListener("click", () => {
-  for (const o of $$(".tabs button")) {
+for (const t of $$(".phases button")) t.addEventListener("click", () => {
+  for (const o of $$(".phases button")) {
     o.setAttribute("aria-selected", String(o === t));
     $("#tab-" + o.dataset.tab).hidden = o !== t;
   }

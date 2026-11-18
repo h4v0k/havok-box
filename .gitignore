@@ -1,9 +1,4 @@
+config/box.json
+config/scope.yaml
 __pycache__/
 *.pyc
-.venv/
-venv/
-*.db
-*.sqlite
-*.sqlite3
-config/scope.yaml
-.DS_Store

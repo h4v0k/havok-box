@@ -29,8 +29,11 @@ SCOPE = {
 class Recorder:
     def __init__(self):
         self.cmds = []
+        self.fail = False
 
     def __call__(self, cmd):
+        if self.fail:
+            raise RuntimeError("tool crashed")
         self.cmds.append(cmd)
         if cmd[0] == "curl":
             return DEVICES

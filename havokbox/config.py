@@ -31,10 +31,15 @@ class BoxConfig:
     box_address: str = "192.168.4.1"         # address handed out in the console link
     evidence_dir: str = "/data/havokbox/evidence"
     # API commander — OFF until key + cap are set.
-    commander_model: str = "claude-opus-5-5"
+    commander_model: str = "claude-haiku-5-5"   # cheap default; configurable
     commander_max_calls_per_day: int = 0     # 0 = disabled (spend cap; req 8)
     anthropic_api_key: str = ""
     drain_interval_s: int = 30
+    # TLS — fails closed: the server won't start without cert+key unless explicitly allowed.
+    tls_cert: str = "/data/havokbox/tls/box.crt"
+    tls_key: str = "/data/havokbox/tls/box.key"
+    allow_insecure_http: bool = False
+    source_path: str = ""                    # where this config was loaded from (for re-reads)
 
     @classmethod
     def load(cls, path: str | None = None, env=None) -> "BoxConfig":
@@ -46,6 +51,7 @@ class BoxConfig:
                 data = json.load(fh)
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
         cfg = cls(**known)
+        cfg.source_path = path or ""
         if env.get("HAVOKBOX_TOKEN"):
             cfg.token = env["HAVOKBOX_TOKEN"]
         if env.get("HAVOKBOX_CONSOLE_PASSWORD"):
@@ -62,6 +68,19 @@ class BoxConfig:
             ipaddress.ip_network(c, strict=False)
         if self.session_limit_s <= 0:
             raise ValueError("session_limit_s must be > 0")
+
+    def console_enabled_now(self) -> bool:
+        """Re-read the console flag from disk every time — never cached (design-check #11)."""
+        if not self.source_path:
+            return self.console_enabled
+        try:
+            with open(self.source_path) as fh:
+                return bool(json.load(fh).get("console_enabled", False))
+        except (OSError, ValueError):
+            return False  # unreadable config -> console off
+
+    def tls_ready(self) -> bool:
+        return os.path.exists(self.tls_cert) and os.path.exists(self.tls_key)
 
     def on_lan(self, client_ip: str | None) -> bool:
         try:

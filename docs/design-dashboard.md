@@ -9,6 +9,27 @@
 Addendum to `docs/architecture.md`. Covers what the dashboard build adds: the HTTP server,
 background jobs, auth, the drain loop + Claude commander, the watchdog, and the console.
 
+## Verification status (checked against `main`, Nov 2026)
+
+| # | Status | Where / note |
+|---|--------|--------------|
+| 1 | Met | `tasks.task_digest`; `Api.approve(task_id, digest)` refuses a stale digest; `Api.run` re-checks the approval's digest before executing and voids it on mismatch. Approval's digest is stored in the approvals row's target JSON (no schema change). |
+| 2 | Met (variant) | Approvals stay keyed by `task_id`; re-approving after a consumed/failed run replaces the old row and logs it to evidence, so a fresh approval is always created. |
+| 3 | Met | `Handlers.run` returns `409 approve first` with nothing queued; scan tasks (incl. mode) built in `Handlers.scan` via `Api.prepare_scan`. Consumption stays atomic in the orchestrator. |
+| 4 | Met | `textContent` only, no inline script/style, CSP + nosniff + no-referrer + `X-Frame-Options: DENY`; labels from `tasks.LABELS`; LLM text never displayed or stored as a label. |
+| 5 | Met | `server.tls_args` exits without cert/key unless `allow_insecure_http`; `havokbox.provision` prints the SHA-256 fingerprint. |
+| 6 | Met | `tasks.make_task` used by planner (`Api._plan_from`) and commander (`Drainer.sanitise`); unknown target keys rejected. |
+| 7 | Met | `tasks.step_kind` = tool + canonical target (lowercase BSSID, canonical IP/CIDR), shared by both paths. |
+| 8 | Met | Zero valid proposals marks done; errors back off 30s·2ⁿ, marked failed after 5 (`drain.MAX_ATTEMPTS`). |
+| 9 | Met | Watchdog spawns children with `start_new_session` and kills the process group on shutdown and after a crash; voided approvals written to evidence first. |
+| 10 | Met | Console: own password, TLS required (`-S -C -K`), off by default; documented as out-of-gate in `docs/console.md`. |
+| 11 | Met | `needs_approval` from `gate.evaluate`; console flag re-read from the config file each request (config is `config/box.json`, not `box.yaml`). |
+
+Also matched: Starlette (not FastAPI), one job lane per space, `GET /api/jobs/{id}`, `drain_many`,
+locked reads, Haiku default commander model, phase tabs (Recon / Enumerate / Test / Report), and no
+dead Phase-3 cards. A planner step whose tool isn't registered (e.g. `wifi.capture`) is skipped and
+logged instead of shown.
+
 ## Design-check resolutions (these override the sections below where they differ)
 
 1. **Approvals are bound to the exact command.** Every task carries its mode, stamped in code

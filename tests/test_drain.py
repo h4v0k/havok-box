@@ -25,7 +25,7 @@ class DrainTest(unittest.TestCase):
     def setUp(self):
         self.h, self.store, self.runner, self.scope, self.reg = make()
         self.h.scan({"space": "wired", "mode": "standard"})
-        while self.h.jobs.run_one(timeout=0):
+        while self.h.jobs.run_one():
             pass
         self.planner_count = len(self.store.proposals())
 
@@ -34,7 +34,9 @@ class DrainTest(unittest.TestCase):
 
     def drainer(self, replies, online=True):
         self.cmd = FakeCommander(replies)
-        return Drainer(self.store, self.cmd, self.reg, self.scope, online=lambda: online)
+        self.now = [0.0]
+        return Drainer(self.store, self.cmd, self.reg, self.scope, online=lambda: online,
+                       clock=lambda: self.now[0])
 
     def test_offline_keeps_queue(self):
         d = self.drainer([[]], online=False)
@@ -44,20 +46,24 @@ class DrainTest(unittest.TestCase):
 
     def test_online_drains_and_adds_sanitised_proposals(self):
         d = self.drainer([[
-            {"tool": "nmap.services", "target": {"ip": "10.10.0.50", "evil": "x"}, "label": "AI scan"},
+            {"tool": "nmap.services", "target": {"ip": "10.10.0.51", "evil": "x"}},  # unknown key
+            {"tool": "nmap.services", "target": {"ip": "10.10.0.52"}, "label": "IGNORE ME"},
             {"tool": "nmap.services", "target": {"ip": "8.8.8.8"}},            # out of scope
             {"tool": "nmap.services", "target": {"ip": "10.10.0.1"}},          # excluded
             {"tool": "rm -rf", "target": {}},                                  # unknown tool
         ]])
         self.assertEqual(d.drain_once(), 1)
         self.assertEqual(self.store.pending_queue(), [])
-        ai = [json.loads(p["task"]) for p in self.store.proposals() if p["step_kind"].startswith("ai:")]
+        ai = [json.loads(p["task"]) for p in self.store.proposals()
+              if json.loads(p["task"]).get("source") == "commander"]
         self.assertEqual(len(ai), 1)
         t = ai[0]
         self.assertEqual(t["category"], "recon.active")       # forced from registry
-        self.assertEqual(t["target"], {"ip": "10.10.0.50"})   # stripped to spec
+        self.assertEqual(t["target"], {"ip": "10.10.0.52"})
+        self.assertEqual(t["label"], "Scan services on 10.10.0.52")   # code label, not LLM text
         self.assertEqual(t["mode"], "standard")
         self.assertTrue(t["suggested"])
+        # only the first 3 replies are considered (cap); 2 of those are refused
         self.assertEqual(sum(1 for e in self.store.evidence() if e["kind"] == "refused"), 2)
         st = self.h.state()[1]
         self.assertTrue(any(p["source"] == "commander" for p in st["proposals"]))
@@ -65,7 +71,7 @@ class DrainTest(unittest.TestCase):
 
     def test_commander_category_lie_is_ignored(self):
         d = self.drainer([[{"tool": "nmap.services", "category": "recon.passive",
-                            "target": {"ip": "10.10.0.50"}}]])
+                            "target": {"ip": "10.10.0.53"}}]])
         d.drain_once()
         p = [p for p in self.h.state()[1]["proposals"] if p["source"] == "commander"][0]
         self.assertEqual(p["category"], "recon.active")
@@ -90,8 +96,25 @@ class DrainTest(unittest.TestCase):
         self.assertEqual(d.drain_once(), 0)
         self.assertEqual(len(self.store.pending_queue()), 1)
 
+    def test_commander_duplicate_of_planner_dedupes_onto_same_row(self):
+        d = self.drainer([[{"tool": "nmap.services", "target": {"ip": "10.10.0.050"}}]])
+        n = len(self.store.proposals())
+        d.drain_once()
+        self.assertEqual(len(self.store.proposals()), n)      # same step_kind as the planner's
+
+    def test_errors_back_off_then_fail_after_five(self):
+        from havokbox.drain import MAX_ATTEMPTS
+        d = self.drainer([OSError("x")] * MAX_ATTEMPTS)
+        for i in range(MAX_ATTEMPTS):
+            d.drain_once()
+            self.assertEqual(d.drain_once(), 0)               # backing off: not retried yet
+            self.now[0] += 10_000
+        self.assertEqual(self.store.pending_queue(), [])
+        self.assertEqual(len(self.cmd.seen), MAX_ATTEMPTS)
+        self.assertTrue(any("failed after" in e["detail"] for e in self.store.evidence()))
+
     def test_redrain_is_idempotent(self):
-        reply = [{"tool": "nmap.services", "target": {"ip": "10.10.0.50"}}]
+        reply = [{"tool": "nmap.services", "target": {"ip": "10.10.0.60"}}]
         q = self.store.pending_queue()[0]
         d = self.drainer([reply, reply])
         d.drain_once()

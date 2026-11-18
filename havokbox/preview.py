@@ -30,12 +30,16 @@ BUILDERS = {
 }
 
 
-def command_for(task: dict, scope) -> str | None:
+def argv_for(task: dict, scope) -> list[str] | None:
     fn = BUILDERS.get(task.get("tool"))
     if fn is None:
         return None
     try:
-        argv = fn(task.get("target") or {}, task.get("mode", "stealth"), scope)
+        return fn(task.get("target") or {}, task.get("mode", "stealth"), scope)
     except (KeyError, TypeError, ValueError):
         return None
-    return shlex.join(argv)
+
+
+def command_for(task: dict, scope) -> str | None:
+    argv = argv_for(task, scope)
+    return shlex.join(argv) if argv is not None else None

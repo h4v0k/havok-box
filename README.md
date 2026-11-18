@@ -24,12 +24,13 @@ Phase 1 (Wi-Fi + wired recon, box-served dashboard) built. Run on the Pi:
 ```
 cp config/box.example.json config/box.json      # edit lan_cidrs / box_address
 cp config/scope.example.yaml config/scope.yaml  # edit to your lab
-pip install fastapi uvicorn pyyaml
-HAVOKBOX_TOKEN=... python3 -m havokbox.watchdog # serves the dashboard on :8080
+pip install starlette uvicorn pyyaml
+python3 -m havokbox.provision                   # token + self-signed cert; prints the SHA-256 fingerprint
+python3 -m havokbox.watchdog                    # serves the dashboard on https://<box>:8443
 python3 -m unittest discover -s tests
 ```
 
-Console setup: `docs/console.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
+Console setup: `docs/console.md`. Dashboard design + checklist: `docs/design-dashboard.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
 
 ## Hardware
 

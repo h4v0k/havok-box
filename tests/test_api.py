@@ -56,19 +56,22 @@ class ApiTest(unittest.TestCase):
 
     def test_approve_then_run_executes(self):
         self.api.scan("wired", "standard")
-        tid = self.api.state()["proposals"][0]["task_id"]
-        self.assertEqual(self.api.approve(tid)["status"], "granted")
+        p = self.api.state()["proposals"][0]
+        tid = p["task_id"]
+        self.assertEqual(self.api.approve(tid, "wrong")["status"], "stale")
+        self.assertEqual(self.api.approve(tid, p["digest"])["status"], "granted")
         self.assertEqual(self.api.run(tid)["status"], "ok")
         kinds = {f["kind"] for f in self.api.state()["findings"]}
         self.assertEqual(kinds, {"hosts", "services"})
 
-    def test_wifi_scan_flags_evil_twin_and_proposes_capture(self):
+    def test_wifi_scan_flags_evil_twin_without_dead_capture_button(self):
         r = self.api.scan("wifi")
         self.assertEqual(r["status"], "ok")
         st = self.api.state()
         survey = [f for f in st["findings"] if f["kind"] == "wifi_survey"][0]
         self.assertEqual(len(survey["data"]["evil_twins"]), 1)
-        self.assertTrue(any(p["category"] == "wifi.deauth" for p in st["proposals"]))
+        # the capture tool isn't registered yet, so no dead button is proposed (design: no orphans)
+        self.assertFalse(any(p["category"] == "wifi.deauth" for p in st["proposals"]))
 
 
 if __name__ == "__main__":

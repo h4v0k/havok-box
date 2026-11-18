@@ -77,7 +77,16 @@ class Store:
 
     # ---- approvals (dashboard grants; orchestrator consumes) --------------
     def grant_approval(self, task_id, category, target) -> None:
+        """Grant a fresh approval. A consumed one for the same task (a failed run) is replaced by a
+        new grant instead of silently ignored (design-check #2); the old one stays in evidence."""
         with self._lock, self.cx:
+            old = self.cx.execute("SELECT * FROM approvals WHERE task_id=? AND consumed IS NOT NULL",
+                                  (task_id,)).fetchone()
+            if old:
+                self.cx.execute("INSERT INTO evidence(ts,kind,detail) VALUES(?,?,?)",
+                                (time.time(), "approval", f"re-approval of {task_id}; previous grant "
+                                 f"consumed at {old['consumed']}"))
+                self.cx.execute("DELETE FROM approvals WHERE task_id=?", (task_id,))
             self.cx.execute(
                 "INSERT OR IGNORE INTO approvals(task_id,category,target,granted,consumed)"
                 " VALUES(?,?,?,?,NULL)",
@@ -94,9 +103,19 @@ class Store:
             return cur.rowcount == 1
 
     def void_unconsumed_approvals(self) -> int:
+        """Void every un-consumed approval, writing each to evidence first (design-check #9)."""
         with self._lock, self.cx:
+            rows = self.cx.execute("SELECT * FROM approvals WHERE consumed IS NULL").fetchall()
+            for r in rows:
+                self.cx.execute("INSERT INTO evidence(ts,kind,detail) VALUES(?,?,?)",
+                                (time.time(), "voided", f"approval {r['task_id']} {r['category']} "
+                                 f"{r['target']} granted {r['granted']}"))
             cur = self.cx.execute("DELETE FROM approvals WHERE consumed IS NULL")
             return cur.rowcount
+
+    def open_approval(self, task_id):
+        rows = self._read("SELECT * FROM approvals WHERE task_id=? AND consumed IS NULL", (task_id,))
+        return rows[0] if rows else None
 
     # ---- offline queue ----------------------------------------------------
     def enqueue(self, result_id, kind, payload) -> None:
@@ -123,6 +142,16 @@ class Store:
                 (result_id, step_kind, json.dumps(task), "pending", time.time()),
             )
             self.cx.execute("UPDATE offline_queue SET done=? WHERE id=?", (time.time(), queue_id))
+
+    def drain_many(self, queue_id, items) -> None:
+        """Insert N proposals AND mark the entry done in ONE transaction. items: (rid, step, task)."""
+        with self._lock, self.cx:
+            for rid, step, task in items:
+                self.cx.execute(
+                    "INSERT OR IGNORE INTO proposals(result_id,step_kind,task,status,created)"
+                    " VALUES(?,?,?,?,?)", (rid, step, json.dumps(task), "pending", time.time()))
+            self.cx.execute("UPDATE offline_queue SET done=? WHERE id=? AND done IS NULL",
+                            (time.time(), queue_id))
 
     def drain_empty(self, queue_id) -> None:
         """Mark a queue entry done when the commander proposed nothing. Idempotent."""
