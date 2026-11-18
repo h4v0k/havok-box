@@ -20,5 +20,7 @@
   "allow_insecure_http": false,
   "publish_url": "",
   "publish_evidence_limit": 2000,
-  "box_name": "havok-box"
+  "box_name": "havok-box",
+  "wardrive_mine": [],
+  "wardrive_retention_days": 7
 }

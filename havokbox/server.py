@@ -284,7 +284,7 @@ class Handlers:
         sid = self._str(body, "session", 32)
         if wd is None or not sid:
             return 400, {"status": "error", "reason": "session required"}
-        ok = wd.db.delete_session(sid)
+        ok = wd.delete_session(sid)
         return (200, {"status": "deleted"}) if ok else (409, {"status": "error", "reason": "not found or running"})
 
     def wardrive_state(self, session: str | None = None) -> tuple[int, dict]:
@@ -297,7 +297,7 @@ class Handlers:
         sid = session or wd.sid or (sessions[0]["id"] if sessions else None)
         out = {"enabled": True, "running": wd.running(), "session": sid, "sessions": sessions,
                "fix": wd.gps.fix() if wd.running() else None,
-               "live_distance_m": wd.live_distance_m()}
+               "live_distance_m": wd.live_distance_m(), "notes": list(wd.notes)[:10]}
         if sid:
             track = db.query("SELECT ts, lat, lon, degraded FROM track WHERE session_id=? ORDER BY ts", (sid,))
             step = max(1, len(track) // 500)
@@ -334,17 +334,22 @@ class Handlers:
                                 "last_ts AS last_seen, best_rssi, lat, lon FROM device_cells "
                                 "WHERE session_id=? AND radio='ble'", (s["id"],))
             return 200, (export.ble_csv(cells).encode(), f"havokbox-{s['id']}-ble.csv", "text/csv")
-        db_path = export.newest_kismetdb(wd.hw.get("kismet_log_dir", ""), s["started"] - 3600)
-        if not db_path:
-            return 404, {"status": "error", "reason": "no Kismet log for this session"}
-        out = os.path.join(tempfile.mkdtemp(prefix="hbx-"), "export")
-        argv = export.wigle_argv(db_path, out) if fmt == "wigle" else export.kml_argv(db_path, out)
-        wd.runner(argv, 120)
+        logs = wd.kismet_logs_for(s)      # the Kismet log(s) written during THIS drive
+        if not logs:
+            return 404, {"status": "error", "reason": "no Kismet log for this drive"}
+        import shutil
+        tmp = tempfile.mkdtemp(prefix="hbx-")
         try:
-            with open(out, "rb") as fh:
-                data = fh.read()
-        except OSError:
-            return 500, {"status": "error", "reason": "export tool produced no file"}
+            out = os.path.join(tmp, "export")
+            argv = export.wigle_argv(logs[0], out) if fmt == "wigle" else export.kml_argv(logs[0], out)
+            wd.runner(argv, 120)
+            try:
+                with open(out, "rb") as fh:
+                    data = fh.read()
+            except OSError:
+                return 500, {"status": "error", "reason": "export tool produced no file"}
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)   # no plaintext copy left in /tmp
         name = f"havokbox-{s['id']}." + ("csv" if fmt == "wigle" else "kml")
         return 200, (data, name, "text/csv" if fmt == "wigle" else "application/vnd.google-earth.kml+xml")
 
@@ -431,6 +436,7 @@ def create_app(handlers: Handlers | None = None):
     from pathlib import Path
 
     from starlette.applications import Starlette
+    from starlette.concurrency import run_in_threadpool
     from starlette.middleware import Middleware
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
@@ -480,24 +486,27 @@ def create_app(handlers: Handlers | None = None):
         return reply(h.job(request.path_params["job_id"]))
 
     async def wd_start(request):
-        return reply(h.wardrive_start(await body(request)))
+        b = await body(request)
+        return reply(await run_in_threadpool(h.wardrive_start, b))
 
     async def wd_stop(request):
-        return reply(h.wardrive_stop())
+        return reply(await run_in_threadpool(h.wardrive_stop))
 
     async def wd_ack(request):
-        return reply(h.wardrive_ack(await body(request)))
+        b = await body(request)
+        return reply(await run_in_threadpool(h.wardrive_ack, b))
 
     async def wd_delete(request):
-        return reply(h.wardrive_delete(await body(request)))
+        b = await body(request)
+        return reply(await run_in_threadpool(h.wardrive_delete, b))
 
     async def wd_state(request):
-        return reply(h.wardrive_state(request.query_params.get("session")))
+        return reply(await run_in_threadpool(h.wardrive_state, request.query_params.get("session")))
 
     async def wd_export(request):
         from starlette.responses import Response
-        code, payload = h.wardrive_export(request.query_params.get("session"),
-                                          request.query_params.get("fmt"))
+        code, payload = await run_in_threadpool(h.wardrive_export, request.query_params.get("session"),
+                                                request.query_params.get("fmt"))
         if code != 200:
             return JSONResponse(payload, status_code=code)
         data, name, mime = payload

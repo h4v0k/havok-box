@@ -1,5 +1,6 @@
 """WardriveService end to end with fakes: radios held, passive only, privacy, follow-me, lifecycle."""
 import json
+import sys
 import os
 import sqlite3
 import tempfile
@@ -205,3 +206,117 @@ class ServiceTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTest(ServiceTest):
+    def test_drive_never_writes_evidence(self):
+        before = len(self.store.evidence())
+        self.wd.start("x"); self.wd.stop()
+        new = self.store.evidence()[before:]
+        self.assertFalse(any("session" in e["detail"] or "km" in e["detail"] for e in new), new)
+        self.assertTrue(self.wd.notes)                     # kept locally instead
+
+    def test_wifi_position_is_ours_not_kismet_average(self):
+        self.wd.start()
+        self.fix(27.95, -82.46)
+        self.run.kismet_devices = [{"kismet.device.base.macaddr": CLIENT, "kismet.device.base.type": "Wi-Fi Client",
+                                    "kismet.device.base.location": {"kismet.common.location.avg_loc": {
+                                        "kismet.common.location.geopoint": [-80.0, 25.0]}},
+                                    "kismet.device.base.last_time": 1}]
+        self.wd.tick_kismet()
+        r = self.db.query("SELECT lat, lon, first_ts FROM device_cells")[0]
+        self.assertAlmostEqual(r["lat"], 27.95)
+        self.assertGreater(r["first_ts"], 1_000_000_000)   # our time base, not Kismet's clock
+
+    def test_non_tracker_ble_phone_can_trip_follow_me(self):
+        self.wd.start()
+        self.run.ble = [{"addr": "aa:aa:aa:aa:aa:01", "rssi": -60, "company_ids": [], "uuid16": [],
+                         "mfg_data": [], "random": False}]
+        for lat in (27.9500, 27.9950):
+            t = self.wall[0]
+            for i in range(0, 481, 30):
+                self.wall[0] = t + i; self.mono[0] += 30
+                self.fix(lat, -82.46, self.wall[0]); self.wd.tick_track()
+                if i in (60, 300):
+                    self.wd.tick_ble()
+            for k in range(1, 11):
+                self.wall[0] += 30; self.fix(lat + k * 0.0045, -82.46, self.wall[0]); self.wd.tick_track()
+        self.wd.tick_follow()
+        a = self.db.query("SELECT severity FROM alerts WHERE kind='follow'")
+        self.assertEqual(len(a), 1)
+        self.assertEqual(a[0]["severity"], "high")      # rssi -60 > -70: likely in the car
+
+    def test_late_cap_stop_cannot_end_a_newer_session(self):
+        s1 = self.wd.start(); self.wd.stop()
+        self.wd.start()
+        self.wd.stop(status="capped", sid=s1)
+        self.assertTrue(self.wd.running())
+
+    def test_gps_failure_rolls_back(self):
+        class Boom(FakeReader):
+            def start(self): raise OSError("gpspipe not found")
+        self.wd._reader_factory = Boom
+        self.assertEqual(self.h.wardrive_start({})[0], 409)
+        self.assertFalse(self.wd.running())
+        self.assertFalse(self.h.api.orch.passive_only)
+        self.assertEqual(self.h.scan({"space": "wifi"})[0], 202)
+        self.assertEqual(self.db.query("SELECT status FROM wardrive_sessions")[0]["status"], "failed")
+
+    def test_kismet_logs_follow_session_window_delete_and_retention(self):
+        logdir = os.path.join(self.dir, "kismet"); os.makedirs(logdir)
+        self.wd.hw["kismet_log_dir"] = logdir
+        sid = self.db.start_session("old", now=self.wall[0] - 3 * 86400)
+        self.db.end_session(sid, "stopped", 0, now=self.wall[0] - 3 * 86400 + 600)
+        old = os.path.join(logdir, "a.kismet"); new = os.path.join(logdir, "b.kismet")
+        for f, t in ((old, self.wall[0] - 3 * 86400 + 500), (new, self.wall[0])):
+            open(f, "w").close(); os.utime(f, (t, t))
+        s = self.db.query("SELECT * FROM wardrive_sessions WHERE id=?", (sid,))[0]
+        self.assertEqual(self.wd.kismet_logs_for(s), [old])          # not today's log
+        self.assertTrue(self.wd.delete_session(sid))
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(new))
+        os.utime(new, (self.wall[0] - 30 * 86400,) * 2)
+        self.wd.purge()
+        self.assertFalse(os.path.exists(new))                        # past retention
+
+
+class ThreadedStopTest(unittest.TestCase):
+    """Real collector threads + a real process group: Stop must kill grandchildren and release."""
+    def test_stop_kills_process_group_and_releases(self):
+        import time
+        from havokbox.wardrive.service import GroupRunner
+        d = tempfile.mkdtemp(); path = os.path.join(d, "b.db")
+        h, s0, *_ = make(); s0.close()
+        store = Store(path); h.api.store = h.api.orch.store = store
+        db = WardriveDB(store, path, b"k" * 32)
+        pidfile = os.path.join(d, "child.pid")
+        script = ("import subprocess,time;p=subprocess.Popen(['sleep','60']);"
+                  f"open({pidfile!r},'w').write(str(p.pid));time.sleep(60)")
+        gr = GroupRunner()
+
+        def runner(argv, timeout):
+            if "ble_scan" in " ".join(argv):
+                return gr([sys.executable, "-c", script], 120)   # a slow BLE window
+            return ""
+        import sys
+        wd = WardriveService(db, h.jobs, h.api.orch, store, {"work_dir": d}, runner=runner,
+                             gps_reader_factory=FakeReader)
+        wd.runner.kill_all = gr.kill_all
+        wd.start()
+        for _ in range(50):
+            if os.path.exists(pidfile) and open(pidfile).read():
+                break
+            time.sleep(0.1)
+        child = int(open(pidfile).read())
+        t0 = time.monotonic()
+        wd.stop()
+        self.assertLess(time.monotonic() - t0, 15)
+        time.sleep(0.3)
+        try:
+            alive = open(f"/proc/{child}/stat").read().split()[2] != "Z"
+        except FileNotFoundError:
+            alive = False
+        self.assertFalse(alive, "sleep grandchild survived Stop")
+        self.assertFalse(h.api.orch.passive_only)
+        self.assertEqual(h.scan({"space": "wifi"})[0], 202)
+        store.close()

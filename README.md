@@ -35,6 +35,9 @@ python3 -m unittest discover -s tests
 Interfaces and serial ports: `"hw"` in `config/box.json` (defaults in `havokbox/tools/__init__.py`;
 use `/dev/serial/by-id/...` paths for the Flipper, Marauder and Sniffle dongle). Kismet: create an API key in Kismet's web UI, then write `Cookie: KISMET=<key>` to
 `/data/havokbox/secrets/kismet.header` (`chmod 600`); the key never appears on a command line.
+Wardrive (Drive tab): receive-only; needs gpsd (`-b`), Kismet with `gps=gpsd` and its log dir in
+`hw.kismet_log_dir`, and your own devices in `wardrive_mine` so they never alert. Drives and Kismet
+logs are deleted after 7 days. Design: `docs/design-wardrive.md`.
 Snapshot publishing (Phase 2): deploy the Worker in `cloudflare/` (see its README), set
 `publish_url` in `config/box.json` and `HAVOKBOX_PUBLISH_TOKEN` in the watchdog's environment. Publishing
 waits until the clock is NTP-synced (the Pi has no RTC battery). Then use Report → Publish.

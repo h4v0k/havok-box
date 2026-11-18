@@ -136,7 +136,9 @@ class WardriveDB:
                "ON CONFLICT(session_id,radio,dev_key,cell) DO UPDATE SET last_ts=excluded.last_ts, "
                "n=n+1, best_rssi=MAX(COALESCE(best_rssi,-999),COALESCE(excluded.best_rssi,-999)), "
                "kind=COALESCE(excluded.kind,kind)")
-        total = 0
+        total = getattr(self, "_cells", {}).get(sid, 0)
+        self._cells = getattr(self, "_cells", {})
+        self._calls = getattr(self, "_calls", 0) + 1
         for i in range(0, len(obs), BATCH):
             chunk = obs[i:i + BATCH]
             def go(cx):
@@ -144,10 +146,13 @@ class WardriveDB:
                 cx.executemany(sql, [(sid, o["radio"], o["dev_key"], o["cell"], o["ts"], o["ts"],
                                       o.get("rssi"), o.get("lat"), o.get("lon"), o.get("name"),
                                       o.get("kind")) for o in chunk])
+                if self._calls % 10 and sid in self._cells:
+                    return self._cells[sid] + len(chunk)        # upper bound between real counts
                 n = cx.execute("SELECT COUNT(*) FROM device_cells WHERE session_id=?", (sid,)).fetchone()[0]
                 cx.execute("UPDATE wardrive_sessions SET cells=? WHERE id=?", (n, sid))
                 return n
             total = self._write(go)
+            self._cells[sid] = total
         return total
 
     def add_track(self, sid, ts, lat, lon, fixq, degraded=False):
@@ -171,18 +176,20 @@ class WardriveDB:
         self._write(lambda cx: cx.execute("INSERT OR REPLACE INTO alert_acks VALUES(?,?)",
                                           (int(alert_id), time.time())))
 
-    def delete_session(self, sid: str) -> bool:
-        def go(cx):
-            st = cx.execute("SELECT status FROM wardrive_sessions WHERE id=?", (sid,)).fetchone()
-            if not st or st[0] == "running":
-                return False
-            for t in CHILD_TABLES:
-                if t == "alerts":
-                    cx.execute("DELETE FROM alert_acks WHERE alert_id IN (SELECT id FROM alerts WHERE session_id=?)", (sid,))
-                cx.execute(f"DELETE FROM {t} WHERE session_id=?", (sid,))
-            cx.execute("DELETE FROM wardrive_sessions WHERE id=?", (sid,))
-            return True
-        return self._write(go)
+    def delete_session(self, sid: str, chunk: int = 5000) -> bool:
+        """Child tables first, in short batches so the write lock is never held for long (#8)."""
+        st = self.store._read("SELECT status FROM wardrive_sessions WHERE id=?", (sid,))
+        if not st or st[0]["status"] == "running":
+            return False
+        self._write(lambda cx: cx.execute(
+            "DELETE FROM alert_acks WHERE alert_id IN (SELECT id FROM alerts WHERE session_id=?)", (sid,)))
+        for t in CHILD_TABLES:
+            while self._write(lambda cx: cx.execute(
+                    f"DELETE FROM {t} WHERE rowid IN (SELECT rowid FROM {t} WHERE session_id=? LIMIT ?)",
+                    (sid, chunk)).rowcount):
+                pass
+        self._write(lambda cx: cx.execute("DELETE FROM wardrive_sessions WHERE id=? AND status!='running'", (sid,)))
+        return True
 
     def purge(self, retention_days: int, now: float, clock_ok: bool) -> int:
         """Retention (#8): only with a trustworthy clock, never a running session, child-first."""
