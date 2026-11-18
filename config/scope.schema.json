@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "havok-box scope file",
+  "type": "object",
+  "required": ["name", "networks", "auto_allow", "approval_required"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string" },
+    "owner": { "type": "string" },
+    "networks": {
+      "type": "object",
+      "required": ["include"],
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^\\d{1,3}(\\.\\d{1,3}){3}/\\d{1,2}$" }
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "wifi": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ssids": { "type": "array", "items": { "type": "string" } },
+        "bssids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$" }
+        }
+      }
+    },
+    "rf": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ble_addresses": { "type": "array", "items": { "type": "string" } },
+        "subghz_ids": { "type": "array", "items": { "type": "string" } },
+        "tx_bands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["min_mhz", "max_mhz"],
+            "additionalProperties": false,
+            "properties": {
+              "min_mhz": { "type": "number" },
+              "max_mhz": { "type": "number" },
+              "label": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "auto_allow": { "type": "array", "items": { "type": "string" } },
+    "approval_required": { "type": "array", "items": { "type": "string" } }
+  }
+}

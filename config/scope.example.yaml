@@ -1,0 +1,42 @@
+# havok-box scope file — the single authority for what may be touched.
+# Copy to config/scope.yaml and edit. Anything not listed here is out of scope and refused.
+# LAB USE ONLY.
+
+name: home-lab
+owner: havok
+
+networks:
+  include:
+    - 10.10.0.0/24        # lab VLAN
+    - 192.168.50.0/24     # IoT test VLAN
+  exclude:
+    - 10.10.0.1/32        # lab gateway, leave alone
+
+wifi:
+  ssids:
+    - LAB-NET
+  bssids:
+    - "aa:bb:cc:dd:ee:ff"   # compared case-insensitively
+
+rf:
+  ble_addresses: []
+  subghz_ids: []
+  # Required before any rf.transmit / rf.replay is allowed. US ISM defaults; edit for your bench.
+  tx_bands:
+    - { min_mhz: 314.9,  max_mhz: 315.1, label: "315 ISM" }
+    - { min_mhz: 433.05, max_mhz: 434.79, label: "433 ISM" }
+    - { min_mhz: 902.0,  max_mhz: 928.0, label: "915 ISM" }
+
+# Allowed without asking (listening only). Everything else needs dashboard approval.
+auto_allow:
+  - recon.passive
+
+# Active categories — all require per-action approval, bound to one task and consumed once:
+approval_required:
+  - recon.active
+  - wifi.deauth
+  - wifi.inject
+  - rf.replay
+  - rf.transmit
+  - auth.attempt
+  - exploit.tool
