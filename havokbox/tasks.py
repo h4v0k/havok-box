@@ -42,6 +42,21 @@ LABELS = {
     "marauder.deauth": "Deauth (ESP) on {bssid}",
     "air.adsb": "Aircraft (ADS-B)",
     "air.ais": "Ships (AIS)",
+    "responder.analyze": "Listen for name requests (Responder -A)",
+    "p0f.listen": "Passive OS fingerprint (p0f)",
+    "cleartext.find": "Find cleartext services",
+    "ipv6.listen": "Watch for new IPv6 hosts",
+    "nuclei.scan": "Nuclei detection scan on {ip}",
+    "tls.scan": "TLS scan {ip}",
+    "web.content": "Web content discovery {ip}",
+    "smb.nxc": "SMB null-session enum {ip}",
+    "ldap.anon": "Anonymous LDAP {ip}",
+    "snmp.enum": "SNMP enum {ip}",
+    "exploit.lookup": "Exploit-DB lookup: {query}",
+    "creds.default": "Default-credential check {ip} ({service})",
+    "net.poison.responder": "LLMNR/NBT-NS poison on {network}",
+    "net.poison.mitm6": "mitm6 on {network} ({domain})",
+    "wifi.rogue_ap": "Rogue AP for {ssid}",
 }
 # Label suffixes for optional params that change what the action does.
 LABEL_SUFFIX = {"client": " → client {client}"}

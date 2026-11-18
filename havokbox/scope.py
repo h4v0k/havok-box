@@ -20,7 +20,13 @@ NETWORK_CATEGORIES = {"recon.active", "auth.attempt", "exploit.tool"}
 WIFI_CATEGORIES = {"wifi.deauth", "wifi.inject", "wifi.capture"}
 BLE_CATEGORIES = {"ble.active"}          # connecting to a BLE device (GATT enumeration)
 RF_TX_CATEGORIES = {"rf.replay", "rf.transmit"}
-KNOWN = {PASSIVE, DISCOVERY} | NETWORK_CATEGORIES | WIFI_CATEGORIES | BLE_CATEGORIES | RF_TX_CATEGORIES
+# Kali Test pack. net.poison (LLMNR/NBT-NS/mDNS poisoning, mitm6) is bound to an ISOLATED lab VLAN
+# the owner lists separately in networks.poison_allowed — NOT the general include list. wifi.rogue_ap
+# is bound to the owner's own wifi.ssids. Both need approval and are refused during wardrive/sentry.
+POISON = "net.poison"
+ROGUE_AP = "wifi.rogue_ap"
+KNOWN = ({PASSIVE, DISCOVERY} | NETWORK_CATEGORIES | WIFI_CATEGORIES | BLE_CATEGORIES
+         | RF_TX_CATEGORIES | {POISON, ROGUE_AP})
 
 
 @dataclass(frozen=True)
@@ -45,6 +51,10 @@ class Scope:
         self.tx_bands = [
             (float(b["min_mhz"]), float(b["max_mhz"])) for b in (rf.get("tx_bands") or [])
         ]
+        # Isolated lab VLAN(s) for poisoning — deliberately separate from include (fail-closed if unset)
+        self.poison_allowed = [ipaddress.ip_network(c, strict=False)
+                               for c in (nets.get("poison_allowed") or [])]
+        self.domains = {d.lower() for d in (data.get("domains") or [])}
         self.auto_allow = set(data.get("auto_allow") or [])
         self.approval_required = set(data.get("approval_required") or [])
 
@@ -70,6 +80,23 @@ class Scope:
 
     def freq_allowed(self, mhz: float) -> bool:
         return any(lo <= mhz <= hi for lo, hi in self.tx_bands)
+
+    def network_poison_allowed(self, cidr: str) -> bool:
+        """True only if the whole network is inside an explicit poison_allowed VLAN (never include)."""
+        if not self.poison_allowed:
+            return False
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            return False
+        return any(net.subnet_of(a) for a in self.poison_allowed)
+
+    def ip_poison_allowed(self, ip: str) -> bool:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return any(addr in a for a in self.poison_allowed)
 
 
 class Gate:
@@ -115,6 +142,22 @@ class Gate:
             if not addr or addr not in self.scope.ble:
                 return Decision(False, False, f"target ble addr {addr or '(none)'!r} not in rf.ble_addresses")
             return self._approval(category, f"{category} on in-scope {addr}")
+
+        if category == POISON:
+            net = target.get("network")
+            if not net or not self.scope.network_poison_allowed(net):
+                return Decision(False, False,
+                                f"network {net!r} not in networks.poison_allowed (isolated lab VLAN only)")
+            dom = target.get("domain")
+            if dom is not None and str(dom).lower() not in self.scope.domains:
+                return Decision(False, False, f"domain {dom!r} not in scope domains")
+            return self._approval(category, f"poisoning on isolated VLAN {net}")
+
+        if category == ROGUE_AP:
+            ssid = target.get("ssid")
+            if not ssid or ssid not in self.scope.ssids:
+                return Decision(False, False, f"ssid {ssid!r} not in wifi.ssids (your own SSIDs only)")
+            return self._approval(category, f"rogue AP for your SSID {ssid}")
 
         if category in RF_TX_CATEGORIES:
             dev = str(target.get("id") or "").lower()

@@ -2,3 +2,5 @@ config/box.json
 config/scope.yaml
 __pycache__/
 *.pyc
+config/recipes.yaml
+config/default-creds.txt

@@ -106,3 +106,5 @@ main, .login { max-width: 46rem; margin: 0 auto; padding: 0 1rem 6rem; }
 .svgrid button.busy { outline: 3px solid var(--glow); }
 .check { display: flex; align-items: center; gap: .6rem; min-height: 3rem; }
 .check input { width: 1.4rem; height: 1.4rem; }
+select.text { appearance: none; }
+.report-text { white-space: pre-wrap; line-height: 1.5; }

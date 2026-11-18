@@ -391,6 +391,28 @@ class Handlers:
         name = f"havokbox-{s['id']}." + ("csv" if fmt == "wigle" else "kml")
         return 200, (data, name, "text/csv" if fmt == "wigle" else "application/vnd.google-earth.kml+xml")
 
+    # ---- Kali pack: run any registered tool on a target (gated) --------------
+    def run_tool(self, body) -> tuple[int, dict]:
+        tool = self._str(body, "tool", 48)
+        target = (body or {}).get("target")
+        if not tool or (target is not None and not isinstance(target, dict)):
+            return 400, {"status": "error", "reason": "tool and target{} required"}
+        res = self.api.manual_tool(tool, target or {})
+        code = {"unknown_tool": 404, "bad_params": 400, "refused": 403, "ok": 200}.get(res["status"], 400)
+        return code, res
+
+    def session_report(self) -> tuple[int, dict]:
+        rep = getattr(self, "reporter", None)
+        if rep is None:
+            return 404, {"status": "disabled"}
+        return 200, rep.generate()
+
+    def session_report_latest(self) -> tuple[int, dict]:
+        rep = getattr(self, "reporter", None)
+        if rep is None:
+            return 200, {"status": "disabled"}
+        return 200, {"status": "ok", "report": rep.latest()}
+
     # ---- baseline drift ------------------------------------------------------
     def baseline_learn(self) -> tuple[int, dict]:
         return 200, {"status": "ok", "items": self.api.baseline_learn()}
@@ -617,9 +639,17 @@ def build(cfg: BoxConfig | None = None):
     store.log("server", f"start: voided {n} unconsumed approval(s)")
     scope = load_scope(cfg.scope_path)
     registry = default_registry()
+    from .recipes import load_recipes
+    from .scope import KNOWN as KNOWN_CATEGORIES
+    for name, spec in load_recipes(cfg.recipes_path, KNOWN_CATEGORIES, log=store.log).items():
+        registry.setdefault(name, spec)          # a recipe never shadows a built-in tool
+    from .inventory import Inventory
+    inventory = Inventory(registry)
+    if inventory.missing:
+        store.log("inventory", f"not installed: {', '.join(inventory.missing)}")
     orch = Orchestrator(scope, store, registry, make_runner(cfg.tool_timeout_s), hw=cfg.hardware())
     api = Api(scope, store, orch, mode=cfg.default_mode, gateway_ip=cfg.lab_gateway or None,
-              pinned_static=cfg.pinned_static)
+              pinned_static=cfg.pinned_static, inventory=inventory)
     jobs = Jobs(store)
     commander = ApiCommander(cfg.anthropic_api_key, cfg.commander_model,
                              cfg.commander_max_calls_per_day, registry,
@@ -630,6 +660,8 @@ def build(cfg: BoxConfig | None = None):
                           box=cfg.box_name, scope_name=getattr(scope, "name", ""),
                           evidence_limit=cfg.publish_evidence_limit)
     drainer = Drainer(store, commander, registry, scope, publisher=publisher)
+    from .session_report import SessionReporter
+    h_reporter = SessionReporter(store, commander)
     threading.Thread(target=drainer.run_forever, args=(cfg.drain_interval_s,),
                      daemon=True, name="havokbox-drain").start()
     h = Handlers(api, cfg, jobs, publisher=publisher)
@@ -639,6 +671,7 @@ def build(cfg: BoxConfig | None = None):
     wdb = WardriveDB(store, cfg.db_path, load_key(os.path.join(data_dir, "secrets", "wardrive.key")))
     from .wardrive.notify import Discord
     notifier = Discord(cfg.discord_webhook, map_links=cfg.discord_map_links)
+    h.reporter = h_reporter
     h.wardrive = WardriveService(wdb, jobs, orch, store, cfg.hardware(), scope=scope,
                                  mine=cfg.wardrive_mine, retention_days=cfg.wardrive_retention_days,
                                  notifier=notifier, alpr_path=cfg.alpr_path,
@@ -802,6 +835,16 @@ def create_app(handlers: Handlers | None = None):
     async def alpr_refresh(request):
         return reply(await run_in_threadpool(h.alpr_refresh))
 
+    async def run_tool(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.run_tool, b))
+
+    async def session_report(request):
+        return reply(await run_in_threadpool(h.session_report))
+
+    async def session_report_get(request):
+        return reply(await run_in_threadpool(h.session_report_latest))
+
     async def bl_learn(request):
         return reply(await run_in_threadpool(h.baseline_learn))
 
@@ -864,6 +907,9 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/wardrive/delete", wd_delete, methods=["POST"]),
         Route("/api/wardrive/state", wd_state),
         Route("/api/wardrive/export", wd_export),
+        Route("/api/tool", run_tool, methods=["POST"]),
+        Route("/api/session-report", session_report, methods=["POST"]),
+        Route("/api/session-report", session_report_get),
         Route("/api/baseline/learn", bl_learn, methods=["POST"]),
         Route("/api/baseline/accept", bl_accept, methods=["POST"]),
         Route("/api/baseline/forget", bl_forget, methods=["POST"]),

@@ -1,0 +1,20 @@
+# havok-box bundled default-credential list for creds.default (hydra -C user:pass).
+# <= 20 pairs, vendor defaults only. Copy to the path in hw.default_creds. LAB USE ONLY.
+admin:admin
+admin:password
+admin:
+root:root
+root:toor
+root:calvin
+user:user
+guest:guest
+ubnt:ubnt
+cisco:cisco
+admin:admin1234
+support:support
+service:service
+pi:raspberry
+tomcat:tomcat
+manager:manager
+sa:
+postgres:postgres

@@ -9,8 +9,10 @@ from havokbox.tasks import make_task
 from havokbox.tools.registry import default_registry
 
 SCOPE = Scope({
-    "networks": {"include": ["10.10.0.0/24"], "exclude": ["10.10.0.1/32"]},
+    "networks": {"include": ["10.10.0.0/24"], "exclude": ["10.10.0.1/32"],
+                 "poison_allowed": ["10.10.0.0/24"]},   # test scope: overlap so one sample fits both
     "wifi": {"ssids": ["LAB-NET"], "bssids": ["aa:bb:cc:dd:ee:ff"]},
+    "domains": ["lab.local"],
     "rf": {"ble_addresses": ["c0:ff:ee:00:00:01"], "subghz_ids": ["gate_fob"],
            "tx_bands": [{"min_mhz": 433.05, "max_mhz": 434.79}]},
     "auto_allow": ["recon.passive"],
@@ -18,7 +20,8 @@ SCOPE = Scope({
 SAMPLE = {
     "ip": "10.10.0.50", "network": "10.10.0.0/24", "bssid": "aa:bb:cc:dd:ee:ff", "channel": 6,
     "client": "11:11:11:11:11:11", "addr": "c0:ff:ee:00:00:01", "id": "gate_fob",
-    "freq_mhz": 433.92, "port": 80,
+    "freq_mhz": 433.92, "port": 80, "query": "apache", "domain": "lab.local",
+    "ssid": "LAB-NET", "service": "ssh",
 }
 SHELLS = {"sh", "bash", "/bin/sh", "/bin/bash", "zsh"}
 
@@ -54,6 +57,7 @@ class RegistryIntegrationTest(unittest.TestCase):
     def test_active_tools_refuse_out_of_scope_targets(self):
         g = Gate(SCOPE)
         bad = {"ip": "8.8.8.8", "bssid": "de:ad:be:ef:00:00", "addr": "de:ad:be:ef:00:01",
+               "ssid": "xfinitywifi", "domain": "evil.example", "network": "8.8.8.0/24",
                "id": "someone_elses", "network": "8.8.8.0/24"}
         for name, spec in self.reg.items():
             if spec.category == "recon.passive":

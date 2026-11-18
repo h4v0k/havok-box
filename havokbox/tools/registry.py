@@ -3,7 +3,7 @@ runs under, and what typed params each takes. The orchestrator runs only what's 
 """
 from __future__ import annotations
 
-from . import ToolSpec, air, ble, flipper, kismet, marauder, nmap, sdr, wifi, wired
+from . import ToolSpec, air, ble, flipper, kali_recon, kali_test, kismet, marauder, nmap, sdr, wifi, wired
 
 
 def default_registry() -> dict[str, ToolSpec]:
@@ -116,4 +116,74 @@ def default_registry() -> dict[str, ToolSpec]:
                  params={"seconds": {"type": "int", "min": 10, "max": 600}},
                  fn=air.ais, build=lambda t, mode, scope, hw: air.build_ais(t, mode, scope, hw)),
     ]
+    _add_kali_recon(specs)
+    _add_kali_test(specs)
+    for s in specs:
+        s.binary = getattr(s, "binary", None)
     return {s.name: s for s in specs}
+
+
+def _spec(binary, phase, **kw):
+    s = ToolSpec(**kw)
+    s.binary = binary
+    s.phase = phase
+    return s
+
+
+def _add_kali_test(specs):
+    """Kali Test pack — active, approval-gated, refused during wardrive/sentry/survey (passive_only).
+    net.poison is bound by the gate to networks.poison_allowed (isolated lab VLAN); wifi.rogue_ap to
+    the owner's own wifi.ssids. Capture stays on the box (count only); the box never cracks."""
+    import havokbox.tools.kali_test as kt
+    secs = {"seconds": {"type": "int", "min": 30, "max": 300, "default": 120}}
+    specs += [
+        _spec("hydra", "test", name="creds.default", category="auth.attempt", space="wired",
+              params={"ip": {"type": "ip", "required": True},
+                      "service": {"type": "choice", "choices": ["ssh", "ftp", "smb", "http"], "default": "ssh"}},
+              fn=kt.creds_default, build=lambda t, m, sc, hw: kt.build_creds_default(t, m, sc, hw)),
+        _spec(None, "test", name="net.poison.responder", category="net.poison", space="wired",
+              params={"network": {"type": "cidr", "required": True}, **secs},
+              fn=kt.net_poison_responder, build=lambda t, m, sc, hw: kt.build_net_poison_responder(t, m, sc, hw)),
+        _spec(None, "test", name="net.poison.mitm6", category="net.poison", space="wired",
+              params={"network": {"type": "cidr", "required": True},
+                      "domain": {"type": "str", "required": True}, **secs},
+              fn=kt.net_poison_mitm6, build=lambda t, m, sc, hw: kt.build_net_poison_mitm6(t, m, sc, hw)),
+        _spec(None, "test", name="wifi.rogue_ap", category="wifi.rogue_ap", space="wifi",
+              params={"ssid": {"type": "name", "required": True}, **secs},
+              fn=kt.wifi_rogue_ap, build=lambda t, m, sc, hw: kt.build_wifi_rogue_ap(t, m, sc, hw)),
+    ]
+
+
+def _add_kali_recon(specs):
+    """Kali Recon/Enumerate pack. Reachable from the Tools panel (manual_tool) and the planner;
+    each hidden when its binary isn't installed (inventory)."""
+    import havokbox.tools.kali_recon as kr
+    ip = {"ip": {"type": "ip", "required": True}}
+    def secs(n):
+        return {"seconds": {"type": "int", "min": 10, "max": n}}
+    specs += [
+        _spec("responder", "recon", name="responder.analyze", category="recon.passive", space="wired",
+              params=secs(600), fn=kr.responder_analyze,
+              build=lambda t, m, sc, hw: kr.build_responder(t, m, sc, hw)),
+        _spec("p0f", "recon", name="p0f.listen", category="recon.passive", space="wired",
+              params=secs(600), fn=kr.p0f_listen, build=lambda t, m, sc, hw: kr.build_p0f(t, m, sc, hw)),
+        _spec("tshark", "recon", name="cleartext.find", category="recon.passive", space="wired",
+              params=secs(300), fn=kr.cleartext_find, build=lambda t, m, sc, hw: kr.build_cleartext(t, m, sc, hw)),
+        _spec("detect-new-ip6", "recon", name="ipv6.listen", category="recon.passive", space="wired",
+              params=secs(300), fn=kr.ipv6_listen, build=lambda t, m, sc, hw: kr.build_ipv6(t, m, sc, hw)),
+        _spec("nuclei", "enumerate", name="nuclei.scan", category="recon.active", space="wired",
+              params=ip, fn=kr.nuclei_scan, build=lambda t, m, sc, hw: kr.build_nuclei(t, m, sc, hw)),
+        _spec("testssl.sh", "enumerate", name="tls.scan", category="recon.active", space="wired",
+              params=ip, fn=kr.tls_scan, build=lambda t, m, sc, hw: kr.build_tls(t, m, sc, hw)),
+        _spec("feroxbuster", "enumerate", name="web.content", category="recon.active", space="wired",
+              params=ip, fn=kr.web_content, build=lambda t, m, sc, hw: kr.build_web_content(t, m, sc, hw)),
+        _spec("netexec", "enumerate", name="smb.nxc", category="recon.active", space="wired",
+              params=ip, fn=kr.smb_nxc, build=lambda t, m, sc, hw: kr.build_smb_nxc(t, m, sc, hw)),
+        _spec("ldapsearch", "enumerate", name="ldap.anon", category="recon.active", space="wired",
+              params=ip, fn=kr.ldap_anon, build=lambda t, m, sc, hw: kr.build_ldap(t, m, sc, hw)),
+        _spec("onesixtyone", "enumerate", name="snmp.enum", category="recon.active", space="wired",
+              params=ip, fn=kr.snmp_enum, build=lambda t, m, sc, hw: kr.build_snmp(t, m, sc, hw)),
+        _spec("searchsploit", "report", name="exploit.lookup", category="recon.passive", space="report",
+              params={"query": {"type": "name", "required": True}}, fn=kr.exploit_lookup,
+              build=lambda t, m, sc, hw: kr.build_exploit_lookup(t, m, sc, hw)),
+    ]

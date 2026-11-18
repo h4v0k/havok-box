@@ -11,6 +11,10 @@ networks:
     - 192.168.50.0/24     # IoT test VLAN
   exclude:
     - 10.10.0.1/32        # lab gateway, leave alone
+  # ISOLATED lab VLAN(s) where LLMNR/NBT-NS/mDNS poisoning and mitm6 are allowed. Leave EMPTY unless
+  # this is a segmented test network with no production hosts — poisoning affects every host on it.
+  poison_allowed: []
+    # - 10.10.99.0/24
 
 wifi:
   ssids:
@@ -33,7 +37,13 @@ auto_allow:
   # - recon.discovery   # uncomment to let "Discover hosts" (Standard) sweep in-scope nets without asking
 
 # Active categories — all require per-action approval, bound to one task and consumed once:
+# Domains you own, for mitm6 (net.poison with a -d domain).
+domains: []
+  # - lab.local
+
 approval_required:
+  - net.poison
+  - wifi.rogue_ap
   - recon.active
   - wifi.deauth
   - wifi.inject

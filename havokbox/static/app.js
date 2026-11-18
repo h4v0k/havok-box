@@ -238,8 +238,56 @@ function renderDrift() {
     learn);
 }
 
+let toolCat = [], toolSel = null;
+function renderTools() {
+  const cat = state.tools || [];
+  if (JSON.stringify(cat.map((t) => t.tool)) !== JSON.stringify(toolCat.map((t) => t.tool))) {
+    toolCat = cat;
+    const pick = $("#tool-pick");
+    pick.replaceChildren(...cat.map((t) => el("option", { value: t.tool, text: `${t.label} · ${t.category}` })));
+  }
+  const pick = $("#tool-pick");
+  const t = cat.find((x) => x.tool === pick.value) || cat[0];
+  if (!t) { $("#tool-params").replaceChildren(el("p", { class: "hint", text: "No tools available." })); return; }
+  $("#tool-params").replaceChildren(...Object.entries(t.params).map(([name, meta]) =>
+    el("label", { class: "sub" }, `${name}${meta.required ? " *" : ""} (${meta.type})`,
+      meta.type === "choice"
+        ? el("select", { class: "text tool-arg", "data-p": name }, (meta.choices || []).map((c) => el("option", { value: c, text: c })))
+        : el("input", { class: "text tool-arg", "data-p": name, placeholder: meta.type }))));
+}
+$("#tool-pick") && $("#tool-pick").addEventListener("change", () => renderTools());
+$("#tool-run") && $("#tool-run").addEventListener("click", async () => {
+  const tool = $("#tool-pick").value;
+  const target = {};
+  for (const inp of $$(".tool-arg")) { const v = inp.value.trim(); if (v !== "") target[inp.dataset.p] = /^-?\d+$/.test(v) ? Number(v) : v; }
+  try {
+    const r = await call("POST", "/api/tool", { tool, target });
+    $("#tool-msg").textContent = r.status === "ok"
+      ? (r.needs_approval ? "Queued — approve it in Enumerate or Test." : "Queued.")
+      : (r.reason || r.status);
+  } catch (e) { $("#tool-msg").textContent = e.message; }
+  refresh();
+});
+$("#report-gen") && $("#report-gen").addEventListener("click", async () => {
+  $("#report-gen").disabled = true; $("#report-text").textContent = "Writing…";
+  try {
+    const r = await call("POST", "/api/session-report");
+    $("#report-text").textContent = r.status === "ok" ? r.text
+      : r.status === "disabled" ? "The AI commander is off (set the API key and a spend cap to enable it)."
+      : r.status === "capped" ? "The commander's daily spend cap is reached."
+      : "Could not write a report: " + (r.reason || r.status);
+  } catch (e) { $("#report-text").textContent = e.message; }
+  $("#report-gen").disabled = false;
+});
+function renderReportExtras() {
+  const miss = state.missing_tools || [];
+  $("#missing-tools").replaceChildren(miss.length
+    ? el("p", { class: "hint", text: miss.join(", ") })
+    : el("p", { class: "empty", text: "All registered tools are installed." }));
+}
+
 function render() {
-  renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence(); renderPublish(); renderDrift();
+  renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence(); renderPublish(); renderDrift(); renderTools(); renderReportExtras();
   $("[data-tab=console]").hidden = !state.console_enabled;
 }
 

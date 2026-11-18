@@ -64,6 +64,14 @@
       <h2>Enumerate</h2>
       <p class="hint">Look closer at what recon found. Active scans need your approval.</p>
       <div id="enumerate-list" class="steps"></div>
+      <h2>Run a tool on a target</h2>
+      <div class="card" id="tool-panel">
+        <label class="sub" for="tool-pick">Tool</label>
+        <select id="tool-pick" class="text"></select>
+        <div id="tool-params"></div>
+        <button type="button" id="tool-run" class="btn primary big">Queue (needs approval)</button>
+        <p id="tool-msg" class="hint" aria-live="polite"></p>
+      </div>
     </section>
 
     <section id="tab-test" hidden>
@@ -81,6 +89,13 @@
       </div>
       <h2>Findings timeline</h2>
       <ol id="timeline" class="evidence"></ol>
+      <h2>AI session report</h2>
+      <div class="card" id="report-card">
+        <button type="button" id="report-gen" class="btn primary big">Write session report</button>
+        <p id="report-text" class="report-text"></p>
+      </div>
+      <h2>Tools not installed</h2>
+      <div id="missing-tools"></div>
       <h2>Evidence log</h2>
       <ol id="evidence" class="evidence"></ol>
 

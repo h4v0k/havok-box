@@ -86,13 +86,14 @@ CREATE TABLE IF NOT EXISTS baseline (
 
 class Api:
     def __init__(self, scope, store, orchestrator, mode: str = "stealth", gateway_ip=None,
-                 pinned_static=()):
+                 pinned_static=(), inventory=None):
         self.scope = scope
         self.store = store
         self.orch = orchestrator
         self.mode = mode
         self.gateway_ip = gateway_ip
         self.pinned_static = tuple(pinned_static or ())
+        self.inventory = inventory
         from .baseline import DriftCache
         self._drift_cache = DriftCache()
         self._baseline_ready = False
@@ -189,13 +190,56 @@ class Api:
             acts = []
             for a in c["actions"]:
                 tool = _card_tool(a, self.mode)
-                if tool in self.registry:
+                if tool in self.registry and self._installed(tool):
                     hint = a["hint"][self.mode] if isinstance(a["hint"], dict) else a["hint"]
                     acts.append({"action": a["action"], "label": a["label"], "hint": hint})
             if acts:
                 out.append({"space": c["space"], "title": c["title"], "sub": c["sub"],
                             "actions": acts})
         return out
+
+    def _installed(self, tool: str) -> bool:
+        return self.inventory is None or self.inventory.has(tool)
+
+    def tool_catalog(self) -> list[dict]:
+        """Every registered tool the operator can aim at a target (for the Tools panel). Passive
+        recon tools and recipes included; hides tools whose binary isn't installed."""
+        out = []
+        for name, spec in self.registry.items():
+            if not self._installed(name):
+                continue
+            out.append({"tool": name, "category": spec.category, "space": getattr(spec, "space", ""),
+                        "phase": getattr(spec, "phase", None),
+                        "recipe": bool(getattr(spec, "recipe", False)),
+                        "label": getattr(spec, "label", None) or name,
+                        "params": {k: {kk: vv for kk, vv in v.items() if kk != "default"}
+                                   for k, v in (spec.params or {}).items()},
+                        "needs_approval": spec.category not in ("recon.passive",),
+                        "target_key": self._target_key(spec.category)})
+        out.sort(key=lambda t: (t["category"], t["tool"]))
+        return out
+
+    @staticmethod
+    def _target_key(category):
+        from .recipes import REQUIRED_KEY
+        return REQUIRED_KEY.get(category)
+
+    def manual_tool(self, tool: str, target: dict) -> dict:
+        """Operator aims a registered tool at a target. Builds a gated proposal (approval flow
+        unchanged); never runs anything here. Out-of-scope is refused by the gate at state time."""
+        spec = self.registry.get(tool)
+        if spec is None or not self._installed(tool):
+            return {"status": "unknown_tool"}
+        try:
+            task = make_task(self.registry, tool, target or {}, self.mode, f"manual:{tool}",
+                             suggested=False, source="manual")
+        except TaskError as exc:
+            return {"status": "bad_params", "reason": str(exc)}
+        d = self.gate.evaluate(task)
+        if not d.allowed:
+            return {"status": "refused", "reason": d.reason}
+        self.store.add_proposal(task["_rid"] + ":" + task["id"][:8], task["step_kind"] + "#" + task["id"][:8], task)
+        return {"status": "ok", "task_id": task["id"], "needs_approval": d.needs_approval}
 
     def prepare_scan(self, space: str, mode: str | None = None, action: str | None = None) -> dict:
         """Build the scan task in the request (design-check #3). Returns {status, task?}."""
@@ -347,7 +391,8 @@ class Api:
         except Exception as exc:   # drift is advisory; never break the dashboard
             drift = {"learned": False, "items": [], "error": str(exc)[:120]}
         return {"mode": self.mode, "phase": self._phase(findings, proposals), "cards": self.cards(),
-                "drift": drift,
+                "drift": drift, "tools": self.tool_catalog(),
+                "missing_tools": self.inventory.missing if self.inventory else [],
                 "findings": findings, "proposals": proposals,
                 "evidence": self.store.evidence_recent(evidence_limit),
                 "commander_pending": bool(self.store.pending_queue())}

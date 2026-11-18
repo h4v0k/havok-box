@@ -1,0 +1,29 @@
+# havok-box recipes — owner-written gated tool buttons (copy to config/recipes.yaml).
+# Each recipe wraps ONE installed tool. It goes through the same scope gate + approval as every
+# built-in tool: there is never a shell, placeholders fill argv values only, and an active category
+# must declare the gate's target param (recon.active -> ip; wifi.* -> bssid; net.poison -> network;
+# wifi.rogue_ap -> ssid). A bad recipe is dropped at boot and logged; the rest still load.
+# LAB USE ONLY.
+
+- name: recipe.sslscan
+  label: "TLS ciphers {ip}:{port}"
+  space: wired
+  phase: enumerate
+  category: recon.active
+  params:
+    ip:   {type: ip, required: true}
+    port: {type: int, min: 1, max: 65535, default: 443}
+  argv: ["sslscan", "--no-colour", "{ip}:{port}"]
+  timeout_s: 300
+  parse: lines
+
+- name: recipe.whatweb
+  label: "Fingerprint web {ip}"
+  space: wired
+  phase: enumerate
+  category: recon.active
+  params:
+    ip: {type: ip, required: true}
+  argv: ["whatweb", "--no-errors", "--color=never", "http://{ip}/"]
+  timeout_s: 120
+  parse: lines
