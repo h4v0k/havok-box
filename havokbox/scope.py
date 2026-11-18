@@ -120,3 +120,14 @@ class Gate:
     def _approval(self, category: str, why: str) -> Decision:
         # Active categories are allowed to proceed only to the approval step.
         return Decision(True, True, f"in scope, needs approval: {why}")
+
+
+def load_scope(path: str = "config/scope.yaml") -> Scope:
+    """Read the scope file. A missing or empty file is an error, never an empty-but-valid scope."""
+    import yaml  # runtime dep on the Pi
+
+    with open(path) as fh:
+        data = yaml.safe_load(fh)
+    if not isinstance(data, dict) or not data:
+        raise ValueError(f"scope file {path} is empty or not a mapping")
+    return Scope(data)

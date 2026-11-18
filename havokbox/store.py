@@ -121,6 +121,12 @@ class Store:
             )
             self.cx.execute("UPDATE offline_queue SET done=? WHERE id=?", (time.time(), queue_id))
 
+    def drain_empty(self, queue_id) -> None:
+        """Mark a queue entry done when the commander proposed nothing. Idempotent."""
+        with self._lock, self.cx:
+            self.cx.execute("UPDATE offline_queue SET done=? WHERE id=? AND done IS NULL",
+                            (time.time(), queue_id))
+
     def mark_proposal(self, result_id, step_kind, status) -> None:
         with self._lock, self.cx:
             self.cx.execute(
