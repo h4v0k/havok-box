@@ -39,7 +39,12 @@ class BoxConfig:
     tls_cert: str = "/data/havokbox/tls/box.crt"
     tls_key: str = "/data/havokbox/tls/box.key"
     allow_insecure_http: bool = False
-    source_path: str = ""                    # where this config was loaded from (for re-reads)
+    source_path: str = ""
+    hw: dict = field(default_factory=dict)  # interface/serial overrides; see tools.DEFAULT_HW
+
+    def hardware(self) -> dict:
+        from .tools import DEFAULT_HW
+        return {**DEFAULT_HW, **(self.hw or {})}                    # where this config was loaded from (for re-reads)
 
     @classmethod
     def load(cls, path: str | None = None, env=None) -> "BoxConfig":

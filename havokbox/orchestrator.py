@@ -18,12 +18,14 @@ from .tools import ToolCtx, validate_params
 
 
 class Orchestrator:
-    def __init__(self, scope: Scope, store: Store, registry: dict, runner):
+    def __init__(self, scope: Scope, store: Store, registry: dict, runner, hw: dict | None = None):
         self.scope = scope
         self.gate = Gate(scope)
         self.store = store
         self.registry = registry   # tool name -> ToolSpec
         self.runner = runner        # callable(list[str]) -> str; injected for testability
+        from .tools import DEFAULT_HW
+        self.hw = {**DEFAULT_HW, **(hw or {})}
 
     def execute(self, task: dict) -> dict:
         task_id = task.get("id")
@@ -53,7 +55,8 @@ class Orchestrator:
             if not self.store.consume_approval(task_id):
                 return {"status": "awaiting_approval", "task_id": task_id}
 
-        ctx = ToolCtx(runner=self.runner, mode=task.get("mode", "stealth"), scope=self.scope)
+        ctx = ToolCtx(runner=self.runner, mode=task.get("mode", "stealth"), scope=self.scope,
+                      hw=self.hw)
         try:
             res = spec.fn(task, ctx)
         except Exception as exc:  # a tool crash must not take the orchestrator down

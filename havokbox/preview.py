@@ -1,45 +1,34 @@
 """Exact-command preview for the approval sheet.
 
-The confirm sheet must show the command that will really run. These builders call the SAME
-argv builders the tools use, with the task's frozen mode, so the preview can't drift from the
-run. A tool with no builder here shows "not available" and the sheet won't offer Run.
+Every registered tool declares `build(target, mode, scope, hw) -> [argv, ...]`, the same builder
+its run function calls. The sheet shows those argv lists and the approval digest covers them, so
+the preview can't drift from the run. A tool with no builder shows "not available" and the sheet
+won't offer Run.
 """
 from __future__ import annotations
 
 import shlex
 
-from .tools import kismet, nmap
+from .tools import DEFAULT_HW
 
 
-def _nmap_discovery(target, mode, scope):
-    return nmap.build_discovery_cmd(target["network"], [str(e) for e in scope.exclude])
+def _registry():
+    from .tools.registry import default_registry
+    return default_registry()
 
 
-def _nmap_services(target, mode, scope):
-    return nmap.build_services_cmd(target["ip"], mode)
-
-
-def _kismet_scan(target, mode, scope):
-    return list(kismet.KISMET_CMD)
-
-
-BUILDERS = {
-    "nmap.discovery": _nmap_discovery,
-    "nmap.services": _nmap_services,
-    "kismet.scan": _kismet_scan,
-}
-
-
-def argv_for(task: dict, scope) -> list[str] | None:
-    fn = BUILDERS.get(task.get("tool"))
-    if fn is None:
+def argv_for(task: dict, scope, registry: dict | None = None, hw: dict | None = None):
+    spec = (registry or _registry()).get(task.get("tool"))
+    if spec is None or spec.build is None:
         return None
     try:
-        return fn(task.get("target") or {}, task.get("mode", "stealth"), scope)
+        steps = spec.build(task.get("target") or {}, task.get("mode", "stealth"), scope,
+                           {**DEFAULT_HW, **(hw or {})})
     except (KeyError, TypeError, ValueError):
         return None
+    return [list(a) for a in steps] if steps else None
 
 
-def command_for(task: dict, scope) -> str | None:
-    argv = argv_for(task, scope)
-    return shlex.join(argv) if argv is not None else None
+def command_for(task: dict, scope, registry: dict | None = None, hw: dict | None = None):
+    steps = argv_for(task, scope, registry, hw)
+    return "\n".join(shlex.join(a) for a in steps) if steps is not None else None

@@ -126,7 +126,7 @@ class Api:
         return None
 
     def current_digest(self, task: dict) -> str:
-        return task_digest(task, argv_for(task, self.scope))
+        return task_digest(task, argv_for(task, self.scope, self.registry, self.orch.hw))
 
     def approve(self, task_id: str, shown_digest: str | None = None) -> dict:
         t = self._find_proposal(task_id)
@@ -139,7 +139,7 @@ class Api:
         self.store.grant_approval(task_id, t["category"], {"target": t.get("target", {}),
                                                            "digest": cur})
         self.store.log("approved", f"{t['category']} {t.get('tool')} {json.dumps(t.get('target', {}))}"
-                                   f" :: {command_for(t, self.scope)} :: sha256={cur[:16]}")
+                                   f" :: {command_for(t, self.scope, self.registry, self.orch.hw)} :: sha256={cur[:16]}")
         return {"status": "granted"}
 
     def approval_ok(self, task_id: str) -> bool:
@@ -184,7 +184,7 @@ class Api:
         gate = self.gate
         for p in self.store.proposals():
             t = json.loads(p["task"])
-            argv = argv_for(t, self.scope)
+            argv = argv_for(t, self.scope, self.registry, self.orch.hw)
             decision = gate.evaluate(t)
             runnable = argv is not None and decision.allowed
             proposals.append({
@@ -198,7 +198,7 @@ class Api:
                 "suggested": bool(t.get("suggested")) and runnable,
                 "needs_approval": decision.needs_approval or not decision.allowed,
                 "approved": self.store.open_approval(t.get("id")) is not None,
-                "command": command_for(t, self.scope),
+                "command": command_for(t, self.scope, self.registry, self.orch.hw),
                 "digest": task_digest(t, argv),
                 "runnable": runnable,
                 "in_scope": decision.allowed,

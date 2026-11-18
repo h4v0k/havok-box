@@ -30,12 +30,15 @@ rf:
 # Allowed without asking (listening only). Everything else needs dashboard approval.
 auto_allow:
   - recon.passive
+  # - recon.discovery   # uncomment to let "Discover hosts" (Standard) sweep in-scope nets without asking
 
 # Active categories — all require per-action approval, bound to one task and consumed once:
 approval_required:
   - recon.active
   - wifi.deauth
   - wifi.inject
+  - wifi.capture        # handshake/PMKID capture on one AP (bound to wifi.bssids)
+  - ble.active          # GATT connect to a BLE device (bound to rf.ble_addresses)
   - rf.replay
   - rf.transmit
   - auth.attempt

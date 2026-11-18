@@ -15,6 +15,20 @@ import re
 from dataclasses import dataclass, field
 
 _BSSID = re.compile(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
+_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")   # safe file/capture names: no paths, no dots
+
+# Hardware defaults (overridden by config "hw"). Prefer /dev/serial/by-id paths on the Pi.
+DEFAULT_HW = {
+    "wired_iface": "eth0",
+    "wifi_iface": "wlan1",          # Alfa, managed name
+    "wifi_mon_iface": "wlan1mon",   # Alfa in monitor mode
+    "bt_iface": "hci0",
+    "sniffle_port": "/dev/ttyUSB0",
+    "flipper_port": "/dev/ttyACM0",
+    "marauder_port": "/dev/ttyUSB1",
+    "sniffle_dir": "/opt/sniffle",  # Sniffle checkout (python_cli/sniff_receiver.py)
+    "work_dir": "/data/havokbox/work",
+}
 
 
 @dataclass
@@ -22,15 +36,19 @@ class ToolCtx:
     runner: object   # callable(list[str]) -> str (stdout)
     mode: str
     scope: object
+    hw: dict = field(default_factory=lambda: dict(DEFAULT_HW))
 
 
 @dataclass
 class ToolSpec:
     name: str
     category: str                 # the gate category this tool ALWAYS runs under
-    params: dict                  # field name -> {"type": ..., "required": bool}
+    params: dict                  # field name -> {"type": ..., "required": bool, "min"/"max"/"choices"}
     fn: object                    # callable(task, ctx) -> result dict
     space: str = ""
+    # build(target, mode, scope, hw) -> list of argv lists: EXACTLY what fn will run, in order.
+    # Used for the confirm-sheet preview and the approval digest. fn must call the same builder.
+    build: object = None
 
 
 def validate_params(spec: ToolSpec, target: dict) -> tuple[bool, str]:
@@ -50,12 +68,29 @@ def validate_params(spec: ToolSpec, target: dict) -> tuple[bool, str]:
             elif kind == "bssid":
                 if not _BSSID.match(str(value)):
                     return False, f"{name}: not a BSSID"
-            elif kind == "number":
-                if not isinstance(value, (int, float)):
+            elif kind == "mac":
+                if not _BSSID.match(str(value)):
+                    return False, f"{name}: not a MAC address"
+            elif kind in ("number", "int"):
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
                     return False, f"{name}: not a number"
+                if kind == "int" and not isinstance(value, int):
+                    return False, f"{name}: not an integer"
+                if "min" in meta and value < meta["min"]:
+                    return False, f"{name}: below {meta['min']}"
+                if "max" in meta and value > meta["max"]:
+                    return False, f"{name}: above {meta['max']}"
+            elif kind == "name":
+                if not isinstance(value, str) or not _NAME.match(value):
+                    return False, f"{name}: must be 1-64 of A-Z a-z 0-9 _ -"
+            elif kind == "choice":
+                if value not in meta.get("choices", ()):
+                    return False, f"{name}: must be one of {list(meta.get('choices', ()))}"
             elif kind == "str":
                 if not isinstance(value, str):
                     return False, f"{name}: not a string"
+            else:
+                return False, f"{name}: unknown param type {kind!r}"   # fail closed
         except ValueError:
             return False, f"{name}: not a valid {kind}"
     return True, "ok"

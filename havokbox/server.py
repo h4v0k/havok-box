@@ -228,7 +228,7 @@ def build(cfg: BoxConfig | None = None):
     store.log("server", f"start: voided {n} unconsumed approval(s)")
     scope = load_scope(cfg.scope_path)
     registry = default_registry()
-    orch = Orchestrator(scope, store, registry, make_runner(cfg.tool_timeout_s))
+    orch = Orchestrator(scope, store, registry, make_runner(cfg.tool_timeout_s), hw=cfg.hardware())
     api = Api(scope, store, orch, mode=cfg.default_mode)
     jobs = Jobs(store)
     commander = ApiCommander(cfg.anthropic_api_key, cfg.commander_model,

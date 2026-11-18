@@ -15,9 +15,12 @@ from dataclasses import dataclass
 PASSIVE = "recon.passive"
 DISCOVERY = "recon.discovery"
 NETWORK_CATEGORIES = {"recon.active", "auth.attempt", "exploit.tool"}
-WIFI_CATEGORIES = {"wifi.deauth", "wifi.inject"}
+# wifi.capture: listening for one AP's handshake/PMKID. Passive on air, but it collects auth
+# material, so it is bound to an in-scope BSSID and needs approval like the active ones.
+WIFI_CATEGORIES = {"wifi.deauth", "wifi.inject", "wifi.capture"}
+BLE_CATEGORIES = {"ble.active"}          # connecting to a BLE device (GATT enumeration)
 RF_TX_CATEGORIES = {"rf.replay", "rf.transmit"}
-KNOWN = {PASSIVE, DISCOVERY} | NETWORK_CATEGORIES | WIFI_CATEGORIES | RF_TX_CATEGORIES
+KNOWN = {PASSIVE, DISCOVERY} | NETWORK_CATEGORIES | WIFI_CATEGORIES | BLE_CATEGORIES | RF_TX_CATEGORIES
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,12 @@ class Gate:
             if not bssid or bssid not in self.scope.bssids:
                 return Decision(False, False, f"target bssid {bssid or '(none)'!r} not in wifi.bssids")
             return self._approval(category, f"{category} on in-scope {bssid}")
+
+        if category in BLE_CATEGORIES:
+            addr = str(target.get("addr") or "").lower()
+            if not addr or addr not in self.scope.ble:
+                return Decision(False, False, f"target ble addr {addr or '(none)'!r} not in rf.ble_addresses")
+            return self._approval(category, f"{category} on in-scope {addr}")
 
         if category in RF_TX_CATEGORIES:
             dev = str(target.get("id") or "").lower()
