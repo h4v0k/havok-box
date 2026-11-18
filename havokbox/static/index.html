@@ -35,6 +35,7 @@
     <button type="button" role="tab" data-tab="test" aria-selected="false">Test</button>
     <button type="button" role="tab" data-tab="report" aria-selected="false">Report</button>
     <button type="button" role="tab" data-tab="drive" aria-selected="false">Drive</button>
+    <button type="button" role="tab" data-tab="desktop" aria-selected="false" hidden>Desktop</button>
     <button type="button" role="tab" data-tab="console" aria-selected="false" hidden>Console</button>
   </nav>
 
@@ -122,6 +123,15 @@
       <p class="hint">Line: your route · red: trackers / alerts · grey: access points. Offline map, no tiles.</p>
       <h2>Past drives</h2>
       <div id="wd-sessions"></div>
+    </section>
+
+    <section id="tab-desktop" hidden>
+      <h2>Kali desktop</h2>
+      <p>A full Kali desktop in the browser — mouse and keyboard. Like the console it bypasses the
+        scope gate (you're at the keyboard), so it's box-LAN only, over TLS, and opens behind the
+        VNC password. Issuing the link is logged.</p>
+      <button type="button" id="open-desktop" class="btn primary big">Open desktop</button>
+      <p id="desktop-msg" class="hint" role="alert"></p>
     </section>
 
     <section id="tab-console" hidden>

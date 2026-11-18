@@ -289,6 +289,7 @@ function renderReportExtras() {
 function render() {
   renderMode(); renderPhase(); renderStatus(); renderCards(); renderFindings(); renderLists(); renderEvidence(); renderPublish(); renderDrift(); renderTools(); renderReportExtras();
   $("[data-tab=console]").hidden = !state.console_enabled;
+  $("[data-tab=desktop]").hidden = !state.desktop_enabled;
 }
 
 async function refresh() {
@@ -366,6 +367,10 @@ for (const t of $$(".phases button")) t.addEventListener("click", () => {
 $("#open-console").addEventListener("click", async () => {
   try { const r = await call("GET", "/api/console"); window.open(r.url, "_blank", "noopener"); $("#console-msg").textContent = ""; }
   catch (e) { $("#console-msg").textContent = "Console unavailable: " + e.message; }
+});
+$("#open-desktop") && $("#open-desktop").addEventListener("click", async () => {
+  try { const r = await call("GET", "/api/desktop"); window.open(r.url, "_blank", "noopener"); $("#desktop-msg").textContent = ""; }
+  catch (e) { $("#desktop-msg").textContent = "Desktop unavailable: " + e.message; }
 });
 
 // ---- boot -----------------------------------------------------------------

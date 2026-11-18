@@ -54,7 +54,7 @@ Snapshot publishing (Phase 2): deploy the Worker in `cloudflare/` (see its READM
 `publish_url` in `config/box.json` and `HAVOKBOX_PUBLISH_TOKEN` in the watchdog's environment. Publishing
 waits until the clock is NTP-synced (the Pi has no RTC battery). Then use Report → Publish.
 Adding a tool:
-`docs/tool-contract.md`. Console setup: `docs/console.md`. Dashboard design + checklist: `docs/design-dashboard.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
+`docs/tool-contract.md`. Console setup: `docs/console.md`. Full Kali desktop in the browser (noVNC): `docs/desktop.md`. Dashboard design + checklist: `docs/design-dashboard.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
 
 ## Hardware
 

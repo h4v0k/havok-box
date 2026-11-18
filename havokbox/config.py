@@ -29,6 +29,14 @@ class BoxConfig:
     console_iface: str = "wlan0"
     console_password: str = ""               # separate from the dashboard token; required to run
     box_address: str = "192.168.4.1"         # address handed out in the console link
+    # Remote desktop (noVNC): a full Kali desktop in the browser, mouse + keyboard. Like the Console
+    # it is a gate-BYPASS escape hatch — you at the keyboard — so it is OFF by default, box-LAN only,
+    # TLS, with its OWN VNC password (never the dashboard token), and link issuance is logged.
+    desktop_enabled: bool = False
+    desktop_port: int = 6080                 # websockify/noVNC port on the box-LAN interface
+    desktop_iface: str = "wlan0"
+    desktop_vnc_port: int = 5901             # the VNC server, bound to localhost only
+    novnc_web_dir: str = "/usr/share/novnc"  # noVNC HTML assets on the Pi
     evidence_dir: str = "/data/havokbox/evidence"
     # API commander — OFF until key + cap are set.
     commander_model: str = "claude-haiku-5-5"   # cheap default; configurable
@@ -101,15 +109,21 @@ class BoxConfig:
         if self.session_limit_s <= 0:
             raise ValueError("session_limit_s must be > 0")
 
-    def console_enabled_now(self) -> bool:
-        """Re-read the console flag from disk every time — never cached (design-check #11)."""
+    def _flag_now(self, key: str, default: bool) -> bool:
+        """Re-read a feature flag from disk every time — never cached (design-check #11)."""
         if not self.source_path:
-            return self.console_enabled
+            return default
         try:
             with open(self.source_path) as fh:
-                return bool(json.load(fh).get("console_enabled", False))
+                return bool(json.load(fh).get(key, False))
         except (OSError, ValueError):
-            return False  # unreadable config -> console off
+            return False  # unreadable config -> feature off
+
+    def console_enabled_now(self) -> bool:
+        return self._flag_now("console_enabled", self.console_enabled)
+
+    def desktop_enabled_now(self) -> bool:
+        return self._flag_now("desktop_enabled", self.desktop_enabled)
 
     def tls_ready(self) -> bool:
         return os.path.exists(self.tls_cert) and os.path.exists(self.tls_key)

@@ -37,5 +37,10 @@
     "default_creds": "/opt/havokbox/default-creds.txt",
     "wordlist": "/usr/share/seclists/Discovery/Web-Content/common.txt"
   },
-  "recipes_path": "config/recipes.yaml"
+  "recipes_path": "config/recipes.yaml",
+  "desktop_enabled": false,
+  "desktop_port": 6080,
+  "desktop_iface": "wlan0",
+  "desktop_vnc_port": 5901,
+  "novnc_web_dir": "/usr/share/novnc"
 }

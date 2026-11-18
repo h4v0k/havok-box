@@ -174,6 +174,7 @@ class Handlers:
         st = self.api.state()
         st.update(self.jobs.snapshot())
         st["console_enabled"] = self.cfg.console_enabled_now()
+        st["desktop_enabled"] = self.cfg.desktop_enabled_now()
         st["publish"] = self._publish_state()
         st["wardrive_running"] = bool(self._wd() and self._wd().running())
         return 200, st
@@ -610,6 +611,21 @@ class Handlers:
         self.api.store.log("console", f"console link issued to {client_ip}")
         return 200, {"status": "ok", "url": f"https://{self.cfg.box_address}:{self.cfg.console_port}/"}
 
+    def desktop(self, client_ip: str | None) -> tuple[int, dict]:
+        """Remote desktop (noVNC) link. Same guard posture as the Console: enabled, box-LAN, TLS."""
+        if not self.cfg.desktop_enabled_now():
+            return 404, {"status": "disabled"}
+        if not self.cfg.on_lan(client_ip):
+            self.api.store.log("refused", f"desktop requested from off-LAN {client_ip}")
+            return 403, {"status": "forbidden", "reason": "desktop is box-LAN only"}
+        if not self.cfg.tls_ready():
+            return 503, {"status": "error", "reason": "desktop needs the TLS cert (run provision)"}
+        self.api.store.log("desktop", f"desktop link issued to {client_ip}")
+        # noVNC's own page prompts for the VNC password; scale=remote fits the Pi desktop to the tab.
+        return 200, {"status": "ok",
+                     "url": f"https://{self.cfg.box_address}:{self.cfg.desktop_port}/vnc.html"
+                            "?autoconnect=true&resize=remote"}
+
 
 # ---------------------------------------------------------------------------
 # Real runner + wiring (Pi only)
@@ -891,6 +907,9 @@ def create_app(handlers: Handlers | None = None):
     async def get_console(request):
         return reply(h.console(request.client.host if request.client else None))
 
+    async def get_desktop(request):
+        return reply(h.desktop(request.client.host if request.client else None))
+
     static = Path(__file__).parent / "static"
     routes = [
         Route("/api/state", get_state),
@@ -900,6 +919,7 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/run", post_run, methods=["POST"]),
         Route("/api/jobs/{job_id}", get_job),
         Route("/api/console", get_console),
+        Route("/api/desktop", get_desktop),
         Route("/api/publish", post_publish, methods=["POST"]),
         Route("/api/wardrive/start", wd_start, methods=["POST"]),
         Route("/api/wardrive/stop", wd_stop, methods=["POST"]),

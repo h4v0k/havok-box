@@ -36,6 +36,18 @@ def console_cmd(cfg: BoxConfig) -> list[str] | None:
             "-c", f"havok:{cfg.console_password}", sys.executable, "-m", "havokbox.console_session"]
 
 
+def desktop_cmd(cfg) -> list[str] | None:
+    """websockify serving noVNC over TLS on the box-LAN interface, proxying to the LOCAL VNC server.
+    None = don't run. Off by default; needs TLS. No secret on the argv (the VNC server holds the
+    password in its own 0600 vncpasswd file); the port is restricted to the box LAN by the nftables
+    rule in docs/desktop.md."""
+    if not cfg.desktop_enabled or not cfg.tls_ready():
+        return None
+    return ["websockify", "--web", cfg.novnc_web_dir,
+            "--cert", cfg.tls_cert, "--key", cfg.tls_key,
+            f"{cfg.box_address}:{cfg.desktop_port}", f"localhost:{cfg.desktop_vnc_port}"]
+
+
 class Watchdog:
     def __init__(self, cfg: BoxConfig, store_factory=None, spawn=None, clock=time.monotonic,
                  sleep=time.sleep, poweroff=None, max_restarts: int = 5, window_s: float = 300,
@@ -53,6 +65,7 @@ class Watchdog:
         self.backoff_s = backoff_s
         self.server = None
         self.console = None
+        self.desktop = None
         self.started = None
         self.restarts: list[float] = []
         self.stopped = False
@@ -108,6 +121,10 @@ class Watchdog:
         if ccmd:
             self.console = self.spawn(ccmd)
             self._log("console", f"console enabled on {self.cfg.console_iface}:{self.cfg.console_port}")
+        dcmd = desktop_cmd(self.cfg)
+        if dcmd:
+            self.desktop = self.spawn(dcmd)
+            self._log("desktop", f"remote desktop on {self.cfg.desktop_iface}:{self.cfg.desktop_port}")
 
     def tick(self) -> bool:
         """One supervision step. Returns False once the watchdog has shut down."""
@@ -131,6 +148,9 @@ class Watchdog:
         if self.console is not None and self.console.poll() is not None:
             self._log("console", "console exited, restarting")
             self.console = self.spawn(console_cmd(self.cfg))
+        if self.desktop is not None and self.desktop.poll() is not None:
+            self._log("desktop", "remote desktop exited, restarting")
+            self.desktop = self.spawn(desktop_cmd(self.cfg))
         return True
 
     @staticmethod
@@ -163,6 +183,7 @@ class Watchdog:
         if self.stopped:
             return
         self.stopped, self.stop_reason = True, reason
+        self._stop(self.desktop)
         self._stop(self.console)
         self._stop(self.server)
 
