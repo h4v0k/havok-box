@@ -36,8 +36,40 @@ def validate_port(port: str) -> str:
     return p
 
 
+def _ints(col: str) -> list[int]:
+    out = []
+    for tok in col.split(","):
+        tok = tok.strip().lower()
+        if not tok:
+            continue
+        try:
+            out.append(int(tok, 16) if tok.startswith("0x") or any(c in "abcdef" for c in tok) else int(tok))
+        except ValueError:
+            continue
+    return out
+
+
+def _hexes(col: str) -> list[str]:
+    out = []
+    for tok in col.split(","):
+        tok = tok.strip().lower().replace(":", "")
+        if tok and re.fullmatch(r"[0-9a-f]+", tok) and len(tok) % 2 == 0:
+            out.append(tok[:64])
+    return out
+
+
+def _add_unique(dst: list, items: list, cap: int = 16) -> None:
+    for i in items:
+        if i not in dst and len(dst) < cap:
+            dst.append(i)
+
+
 def parse_tshark_fields(text: str) -> list[dict]:
-    """Rows are addr<TAB>name<TAB>rssi; dedupe by addr, keep strongest rssi, cap at 64."""
+    """Rows: addr, name, signal_dbm, nordic rssi, company_id, uuid_16, data, randomized_tx (tab separated).
+
+    Dedupe by addr, keep strongest rssi, cap at 64. Repeated occurrences within a field are
+    comma-joined by tshark; every occurrence is parsed and merged across rows.
+    """
     seen: dict[str, dict] = {}
     for line in (text or "").splitlines():
         parts = line.split("\t")
@@ -52,15 +84,23 @@ def parse_tshark_fields(text: str) -> list[dict]:
                 break
             except ValueError:
                 continue
+        col = lambda i: parts[i] if len(parts) > i else ""  # noqa: E731
+        cids, u16, mfg = _ints(col(4)), _ints(col(5)), _hexes(col(6))
+        rnd = any(t.strip().lower() in ("1", "true") for t in col(7).split(","))
         cur = seen.get(addr)
         if cur is None:
-            seen[addr] = {"addr": addr, "name": name, "rssi": rssi, "seen": 1}
-            continue
-        cur["seen"] += 1
-        if name and not cur["name"]:
-            cur["name"] = name
-        if rssi is not None and (cur["rssi"] is None or rssi > cur["rssi"]):
-            cur["rssi"] = rssi
+            cur = seen[addr] = {"addr": addr, "name": name, "rssi": rssi, "seen": 1,
+                                "company_ids": [], "uuid16": [], "mfg_data": [], "random": rnd}
+        else:
+            cur["seen"] += 1
+            if name and not cur["name"]:
+                cur["name"] = name
+            if rssi is not None and (cur["rssi"] is None or rssi > cur["rssi"]):
+                cur["rssi"] = rssi
+            cur["random"] = cur["random"] or rnd
+        _add_unique(cur["company_ids"], cids)
+        _add_unique(cur["uuid16"], u16)
+        _add_unique(cur["mfg_data"], mfg)
     devs = sorted(seen.values(), key=lambda d: (d["rssi"] is None, -(d["rssi"] or 0)))
     return devs[:MAX_DEVICES]
 
@@ -77,8 +117,20 @@ def scan(sniffle_dir: str, port: str, seconds: int, work_dir: str, runner=real_r
            seconds + 15)
     out = runner(["tshark", "-r", pcap, "-T", "fields", "-E", "separator=/t",
                   "-e", "btle.advertising_address", "-e", "btcommon.eir_ad.entry.device_name",
-                  "-e", "btle_rf.signal_dbm", "-e", "nordic_ble.rssi"], 60)
-    return {"devices": parse_tshark_fields(out), "pcap": pcap}
+                  "-e", "btle_rf.signal_dbm", "-e", "nordic_ble.rssi",
+                  "-e", "btcommon.eir_ad.entry.company_id", "-e", "btcommon.eir_ad.entry.uuid_16",
+                  "-e", "btcommon.eir_ad.entry.data", "-e", "btle.advertising_header.randomized_tx"], 60)
+    devices = parse_tshark_fields(out)
+    # Privacy: never keep raw captures once parsed.
+    try:
+        os.remove(pcap)
+    except OSError:
+        pass
+    try:
+        os.rmdir(run_dir)
+    except OSError:
+        pass
+    return {"devices": devices, "pcap": None}
 
 
 def main(argv=None) -> int:

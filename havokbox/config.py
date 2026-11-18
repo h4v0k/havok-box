@@ -46,6 +46,9 @@ class BoxConfig:
     publish_token: str = ""                  # write-only ingest token (HAVOKBOX_PUBLISH_TOKEN)
     publish_evidence_limit: int = 2000
     box_name: str = "havok-box"
+    # Wardrive (receive-only). "mine": your own device MACs/BLE addresses (phone, watch, car).
+    wardrive_mine: list = field(default_factory=list)
+    wardrive_retention_days: int = 7
 
     def hardware(self) -> dict:
         from .tools import DEFAULT_HW

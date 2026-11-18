@@ -26,6 +26,8 @@ class Orchestrator:
         self.runner = runner        # callable(list[str]) -> str; injected for testability
         from .tools import DEFAULT_HW
         self.hw = {**DEFAULT_HW, **(hw or {})}
+        # Set while a wardrive session runs: only recon.passive may dispatch (design #1).
+        self.passive_only = False
 
     def execute(self, task: dict) -> dict:
         task_id = task.get("id")
@@ -40,6 +42,10 @@ class Orchestrator:
                 f"category/tool mismatch: task={task.get('category')} {spec.name}={spec.category}",
             )
             return {"status": "refused", "reason": "category/tool mismatch"}
+
+        if self.passive_only and spec.category != "recon.passive":
+            self.store.log("refused", f"{spec.name}: wardrive running, passive only")
+            return {"status": "refused", "reason": "wardrive running: passive tools only"}
 
         decision = self.gate.evaluate(task)
         if not decision.allowed:

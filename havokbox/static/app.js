@@ -67,13 +67,14 @@ function renderMode() {
 // Recon cards come from the box: only signal spaces with a registered tool get a button.
 function renderCards() {
   const busy = new Set(state.running.map((j) => j.lane));
+  if (state.wardrive_running) for (const ln of ["wifi", "ble", "esp", "sdr", "subghz"]) busy.add(ln);
   $("#cards").replaceChildren(...state.cards.map((c) => el("article", { class: "card" },
     el("h3", { text: c.title }),
     el("p", { class: "sub", text: c.sub }),
     c.actions.map((a) => [
       el("button", { type: "button", class: "btn primary big scan", disabled: busy.has(c.space),
         onclick: (e) => startScan(e.currentTarget, c.space, a.action) }, a.label),
-      el("p", { class: "hint", text: busy.has(c.space) ? "Running…" : a.hint }),
+      el("p", { class: "hint", text: busy.has(c.space) ? (state.wardrive_running && c.space !== "wired" ? "In use by the drive." : "Running…") : a.hint }),
     ]))));
 }
 
@@ -192,7 +193,7 @@ function renderLists() {
   $("#enumerate-list").replaceChildren(...(enumr.length ? enumr.map(stepButton)
     : [el("p", { class: "empty", text: "Nothing to enumerate yet. Run a recon scan first." })]));
   $("#test-list").replaceChildren(...(test.length ? test.map(stepButton)
-    : [el("p", { class: "empty", text: "No test actions proposed. Test tools arrive with later phases." })]));
+    : [el("p", { class: "empty", text: state.wardrive_running ? "Test actions are off while a drive is running." : "No test actions proposed yet." })]));
 }
 
 function renderEvidence() {
@@ -308,3 +309,98 @@ function start() {
   clearInterval(timer); timer = setInterval(() => { if (token) refresh(); }, POLL_MS);
 }
 if (token) start(); else lock();
+
+// ---- wardrive (Drive tab) --------------------------------------------------
+let wd = null;
+const SVGNS = "http://www.w3.org/2000/svg";
+function svg(tag, attrs) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+
+function fixText(f) {
+  if (!f || !f.mode || f.mode < 2 || f.lat == null) return "No GPS fix";
+  return `${f.mode === 3 ? "3D" : "2D"} fix${f.used != null ? ` · ${f.used} sats` : ""}${f.degraded ? " · GNSS degraded" : ""}`;
+}
+
+function renderMap(d) {
+  const box = $("#wd-map");
+  const pts = (d.track || []).filter((p) => p.lat != null);
+  const devs = (d.devices || []).filter((x) => x.lat != null);
+  const alerts = (d.alerts || []).filter((a) => a.lat != null);
+  const all = [...pts, ...devs, ...alerts];
+  if (!all.length) { box.replaceChildren(el("p", { class: "hint", text: "No positions yet." })); return; }
+  let [minLat, maxLat, minLon, maxLon] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const p of all) { minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat); minLon = Math.min(minLon, p.lon); maxLon = Math.max(maxLon, p.lon); }
+  const k = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+  const W = 600, H = 420, pad = 20;
+  const spanX = Math.max((maxLon - minLon) * k, 1e-4), spanY = Math.max(maxLat - minLat, 1e-4);
+  const s = Math.min((W - 2 * pad) / spanX, (H - 2 * pad) / spanY);
+  const X = (lon) => pad + (lon - minLon) * k * s, Y = (lat) => H - pad - (lat - minLat) * s;
+  const root = svg("svg", { viewBox: `0 0 ${W} ${H}` });
+  for (const x of devs) {
+    const tracker = x.kind && x.kind !== "ap" && x.kind !== "client";
+    root.append(svg("circle", { cx: X(x.lon), cy: Y(x.lat), r: tracker ? 6 : 2.5, fill: tracker ? "#ff5c5c" : "#56636f" }));
+  }
+  if (pts.length > 1) root.append(svg("polyline", { points: pts.map((p) => `${X(p.lon)},${Y(p.lat)}`).join(" "), fill: "none", stroke: "#3fb6ff", "stroke-width": 3 }));
+  for (const a of alerts) root.append(svg("rect", { x: X(a.lon) - 6, y: Y(a.lat) - 6, width: 12, height: 12, fill: "none", stroke: "#ff5c5c", "stroke-width": 3 }));
+  if (pts.length) { const last = pts[pts.length - 1]; root.append(svg("circle", { cx: X(last.lon), cy: Y(last.lat), r: 7, fill: "#ffcf3f" })); }
+  box.replaceChildren(root);
+}
+
+async function download(session, fmt) {
+  const r = await fetch(`/api/wardrive/export?session=${encodeURIComponent(session)}&fmt=${fmt}`, { headers: { Authorization: "Bearer " + token } });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); $("#wd-status").textContent = "Export failed: " + (j.reason || r.status); return; }
+  const blob = await r.blob();
+  const name = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/);
+  const a = el("a", { href: URL.createObjectURL(blob), download: name ? name[1] : `drive.${fmt}` });
+  document.body.append(a); a.click(); a.remove();
+}
+
+function renderDrive(d) {
+  wd = d;
+  const btn = $("#wd-toggle");
+  if (!d.enabled) { btn.disabled = true; $("#wd-status").textContent = "Wardrive isn't available on this box."; return; }
+  btn.disabled = false;
+  btn.textContent = d.running ? "Stop drive" : "Start drive";
+  btn.className = "btn big " + (d.running ? "danger" : "primary");
+  const radios = (d.summary || []).map((x) => `${x.radio === "wifi" ? "Wi-Fi" : "BLE"} ${x.devices} devices`).join(" · ");
+  const cur = (d.sessions || []).find((x) => x.id === d.session);
+  const km = cur ? ((d.running ? d.live_distance_m : cur.distance_m) / 1000).toFixed(1) + " km" : "";
+  $("#wd-status").textContent = d.running ? [fixText(d.fix), km, radios].filter(Boolean).join(" · ")
+    : cur ? `Last drive: ${cur.status} · ${km}${radios ? " · " + radios : ""}` : "No drives yet.";
+  $("#wd-alerts").replaceChildren(...((d.alerts || []).length ? d.alerts.map((a) => el("li", { class: a.acked ? "acked" : null },
+    el("span", { class: "k sev-" + a.severity, text: a.kind === "follow" ? "Following you" : a.kind }),
+    a.detail, a.dev_plain ? el("div", { class: "hint", text: a.dev_plain }) : null,
+    el("time", { text: fmtTime(a.ts) }),
+    a.acked ? null : el("div", { class: "row" }, el("button", { type: "button", class: "btn", onclick: async () => { await call("POST", "/api/wardrive/ack", { alert_id: a.id }); refreshDrive(); } }, "Acknowledge"))))
+    : [el("p", { class: "empty", text: "No alerts." })]));
+  renderMap(d);
+  $("#wd-sessions").replaceChildren(...(d.sessions || []).filter((x) => x.status !== "running").map((x) => el("article", { class: "finding" },
+    el("header", {}, el("span", { class: "sum", text: `${fmtTime(x.started)}${x.note ? " · " + x.note : ""}` }), el("span", { class: "tag", text: x.status })),
+    el("p", { class: "hint", text: `${(x.distance_m / 1000).toFixed(1)} km` }),
+    el("div", { class: "row" },
+      el("button", { type: "button", class: "btn", onclick: () => download(x.id, "wigle") }, "WiGLE CSV"),
+      el("button", { type: "button", class: "btn", onclick: () => download(x.id, "kml") }, "KML"),
+      el("button", { type: "button", class: "btn", onclick: () => download(x.id, "ble") }, "BLE CSV"),
+      el("button", { type: "button", class: "btn danger", onclick: async () => { await call("POST", "/api/wardrive/delete", { session: x.id }); refreshDrive(); } }, "Delete")))));
+}
+
+async function refreshDrive() {
+  try { renderDrive(await call("GET", "/api/wardrive/state")); } catch (e) { /* box unreachable: main poll reports it */ }
+}
+
+$("#wd-toggle").addEventListener("click", async () => {
+  $("#wd-toggle").disabled = true;
+  try {
+    if (wd && wd.running) await call("POST", "/api/wardrive/stop");
+    else await call("POST", "/api/wardrive/start", { note: $("#wd-note").value.trim() });
+  } catch (e) { $("#wd-status").textContent = e.message; }
+  setTimeout(refreshDrive, 800);
+});
+
+setInterval(() => {
+  if (token && (!$("#tab-drive").hidden || (state && state.wardrive_running))) refreshDrive();
+}, POLL_MS);
+for (const t of $$(".phases button")) t.addEventListener("click", () => { if (t.dataset.tab === "drive") refreshDrive(); });

@@ -27,7 +27,8 @@ DEFAULT_HW = {
     "flipper_port": "/dev/ttyACM0",
     "marauder_port": "/dev/ttyUSB1",
     "sniffle_dir": "/opt/sniffle",
-    "kismet_header": "/data/havokbox/secrets/kismet.header",  # "Cookie: KISMET=<key>", chmod 600  # Sniffle checkout (python_cli/sniff_receiver.py)
+    "kismet_header": "/data/havokbox/secrets/kismet.header",  # "Cookie: KISMET=<key>", chmod 600
+    "kismet_log_dir": "/data/havokbox/kismet",   # Kismet's log_prefix (kismetdb files)  # Sniffle checkout (python_cli/sniff_receiver.py)
     "work_dir": "/data/havokbox/work",
 }
 

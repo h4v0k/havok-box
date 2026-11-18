@@ -139,5 +139,13 @@ class ToolFnRunsBuildArgvTest(unittest.TestCase):
         self.assertEqual(result["data"]["aps"], [])
 
 
+class StopTests(unittest.TestCase):
+    def test_stop_sends_stopscan(self):
+        s = FakeSession({})
+        out = mh.stop(s)
+        self.assertEqual(s.sent, ["stopscan"])
+        self.assertEqual(out["status"], "stopped")
+
+
 if __name__ == "__main__":
     unittest.main()

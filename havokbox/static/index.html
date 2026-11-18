@@ -34,6 +34,7 @@
     <button type="button" role="tab" data-tab="enumerate" aria-selected="false">Enumerate</button>
     <button type="button" role="tab" data-tab="test" aria-selected="false">Test</button>
     <button type="button" role="tab" data-tab="report" aria-selected="false">Report</button>
+    <button type="button" role="tab" data-tab="drive" aria-selected="false">Drive</button>
     <button type="button" role="tab" data-tab="console" aria-selected="false" hidden>Console</button>
   </nav>
 
@@ -70,6 +71,24 @@
       <h2>Evidence log</h2>
       <ol id="evidence" class="evidence"></ol>
 
+    </section>
+
+    <section id="tab-drive" hidden>
+      <h2>Wardrive</h2>
+      <div class="card">
+        <p class="hint">Receive-only. While a drive runs the radios are held and the Test tab is off.</p>
+        <label for="wd-note" class="sub">Note (optional)</label>
+        <input id="wd-note" class="text" maxlength="120" autocomplete="off">
+        <button type="button" id="wd-toggle" class="btn primary big">Start drive</button>
+        <p id="wd-status" class="hint" aria-live="polite"></p>
+      </div>
+      <h2>Alerts</h2>
+      <ol id="wd-alerts" class="evidence"></ol>
+      <h2>Map</h2>
+      <div id="wd-map" class="map" role="img" aria-label="Drive track and devices"></div>
+      <p class="hint">Line: your route · red: trackers / alerts · grey: access points. Offline map, no tiles.</p>
+      <h2>Past drives</h2>
+      <div id="wd-sessions"></div>
     </section>
 
     <section id="tab-console" hidden>

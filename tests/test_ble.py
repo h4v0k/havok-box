@@ -39,11 +39,46 @@ class BleHelperTest(unittest.TestCase):
             return TSHARK if argv[0] == "tshark" else ""
         with tempfile.TemporaryDirectory() as w:
             res = ble_scan.scan("/opt/sniffle", "/dev/ttyUSB0", 10, w, runner=runner)
-            self.assertTrue(os.path.isdir(os.path.dirname(res["pcap"])))
+            self.assertIsNone(res["pcap"])
+            self.assertEqual(os.listdir(w), [])
         self.assertEqual(len(res["devices"]), 2)
         self.assertIn("-a", calls[0])
         self.assertEqual(calls[1][0], "tshark")
         self.assertTrue(all(isinstance(c, list) for c in calls))
+
+    def test_argv_sniffle_passive_only(self):
+        calls = []
+
+        def runner(argv, timeout):
+            calls.append(argv)
+            return ""
+        with tempfile.TemporaryDirectory() as w:
+            ble_scan.scan("/opt/sniffle", "/dev/ttyUSB0", 5, w, runner=runner)
+        flat = " ".join(" ".join(c) for c in calls).lower()
+        for bad in ("scanner.py", "initiator", "relay"):
+            self.assertNotIn(bad, flat)
+        self.assertIn("sniff_receiver.py", " ".join(calls[0]))
+        self.assertIn("-a", calls[0])
+
+    def test_pcap_deleted_after_parse(self):
+        def runner(argv, timeout):
+            if "-o" in argv:
+                open(argv[argv.index("-o") + 1], "wb").write(b"x")
+            return TSHARK if argv[0] == "tshark" else ""
+        with tempfile.TemporaryDirectory() as w:
+            res = ble_scan.scan("/opt/sniffle", "/dev/ttyUSB0", 5, w, runner=runner)
+            self.assertIsNone(res["pcap"])
+            self.assertEqual(os.listdir(w), [])
+
+    def test_parse_extended_fields(self):
+        row = "aa:bb:cc:dd:ee:09\t\t-50\t\t0x004c,0x0006\t0xfeaa,0xfeed\t4c001219,aabb\t1\n"
+        d = ble_scan.parse_tshark_fields(row)[0]
+        self.assertEqual(d["company_ids"], [0x4C, 6])
+        self.assertEqual(d["uuid16"], [0xFEAA, 0xFEED])
+        self.assertEqual(d["mfg_data"], ["4c001219", "aabb"])
+        self.assertTrue(d["random"])
+        d0 = ble_scan.parse_tshark_fields(TSHARK)[0]
+        self.assertEqual((d0["company_ids"], d0["mfg_data"], d0["random"]), ([], [], False))
 
     def test_port_validation(self):
         for bad in ("/etc/passwd", "ttyUSB0", "/dev/../etc/x"):

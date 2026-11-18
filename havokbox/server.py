@@ -29,6 +29,11 @@ from .config import MODES, BoxConfig
 from .store import new_id
 
 SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "esp")
+WARDRIVE_LANES = ("wifi", "ble", "esp", "sdr", "subghz")
+
+
+class LaneHeld(RuntimeError):
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -41,12 +46,29 @@ class Jobs:
         self.lanes: dict[str, collections.deque] = {}
         self.recent = collections.deque(maxlen=history)
         self.running: dict[str, dict] = {}
+        self.held: set[str] = set()      # lanes owned by a wardrive session
         self._cv = threading.Condition()
+
+    def hold(self, lanes) -> bool:
+        """Take lanes for wardrive. False if any has a job running or queued (design #1)."""
+        with self._cv:
+            lanes = set(lanes)
+            if any(ln in self.running for ln in lanes) or any(self.lanes.get(ln) for ln in lanes):
+                return False
+            self.held |= lanes
+            return True
+
+    def release(self, lanes) -> None:
+        with self._cv:
+            self.held -= set(lanes)
+            self._cv.notify_all()
 
     def submit(self, label: str, fn, lane: str = "default") -> dict:
         job = {"id": new_id(), "label": label, "lane": lane, "status": "queued",
                "submitted": time.time()}
         with self._cv:
+            if lane in self.held:
+                raise LaneHeld(lane)
             self.recent.appendleft(job)
             if lane not in self.lanes:
                 self.lanes[lane] = collections.deque()
@@ -66,6 +88,11 @@ class Jobs:
         with self._cv:
             for ln in ([lane] if lane else list(self.lanes)):
                 q = self.lanes.get(ln)
+                if q and ln in self.held:
+                    # queued before a session took the lane: refuse it rather than run it
+                    job, _ = q.popleft()
+                    job["status"], job["detail"] = "refused", "wardrive running"
+                    continue
                 if q:
                     job, fn = q.popleft()
                     job["status"] = "running"
@@ -130,6 +157,7 @@ class Handlers:
         st.update(self.jobs.snapshot())
         st["console_enabled"] = self.cfg.console_enabled_now()
         st["publish"] = self._publish_state()
+        st["wardrive_running"] = bool(self._wd() and self._wd().running())
         return 200, st
 
     def _publish_state(self) -> dict:
@@ -174,8 +202,11 @@ class Handlers:
         if prep["status"] == "needs_approval":
             return 200, prep
         task = prep["task"]
-        job = self.jobs.submit(f"{task['label']} [{mode}]", lambda: self.api.execute_scan(task),
-                               lane=space)
+        try:
+            job = self.jobs.submit(f"{task['label']} [{mode}]", lambda: self.api.execute_scan(task),
+                                   lane=space)
+        except LaneHeld:
+            return 409, {"status": "error", "reason": "wardrive running: this radio is in use"}
         return 202, {"status": "queued", "job_id": job["id"]}
 
     def mode(self, body: dict) -> tuple[int, dict]:
@@ -209,8 +240,113 @@ class Handlers:
             return 409, {"status": "error", "reason": "approve first"}   # nothing queued
         spec = self.api.registry.get(t.get("tool"))
         lane = getattr(spec, "space", "") or "default"
-        job = self.jobs.submit(t.get("label") or tid[:8], lambda: self.api.run(tid), lane=lane)
+        try:
+            job = self.jobs.submit(t.get("label") or tid[:8], lambda: self.api.run(tid), lane=lane)
+        except LaneHeld:
+            return 409, {"status": "error", "reason": "wardrive running: this radio is in use"}
         return 202, {"status": "queued", "job_id": job["id"]}
+
+    # ---- wardrive (receive-only) -------------------------------------------
+    def _wd(self):
+        return getattr(self, "wardrive", None)
+
+    def wardrive_start(self, body: dict) -> tuple[int, dict]:
+        wd = self._wd()
+        if wd is None:
+            return 404, {"status": "disabled"}
+        note = (body or {}).get("note") or ""
+        if not isinstance(note, str):
+            return 400, {"status": "error", "reason": "note must be text"}
+        from .wardrive.service import WardriveError
+        try:
+            sid = wd.start(note[:120])
+        except WardriveError as exc:
+            return 409, {"status": "error", "reason": str(exc)}
+        return 200, {"status": "running", "session": sid}
+
+    def wardrive_stop(self) -> tuple[int, dict]:
+        wd = self._wd()
+        if wd is None or not wd.running():
+            return 409, {"status": "error", "reason": "no session running"}
+        threading.Thread(target=wd.stop, daemon=True).start()   # collectors can take ~40 s to wind down
+        return 202, {"status": "stopping"}
+
+    def wardrive_ack(self, body: dict) -> tuple[int, dict]:
+        wd = self._wd()
+        aid = (body or {}).get("alert_id")
+        if wd is None or not isinstance(aid, int) or isinstance(aid, bool):
+            return 400, {"status": "error", "reason": "alert_id required"}
+        wd.db.ack(aid)
+        return 200, {"status": "ok"}
+
+    def wardrive_delete(self, body: dict) -> tuple[int, dict]:
+        wd = self._wd()
+        sid = self._str(body, "session", 32)
+        if wd is None or not sid:
+            return 400, {"status": "error", "reason": "session required"}
+        ok = wd.db.delete_session(sid)
+        return (200, {"status": "deleted"}) if ok else (409, {"status": "error", "reason": "not found or running"})
+
+    def wardrive_state(self, session: str | None = None) -> tuple[int, dict]:
+        wd = self._wd()
+        if wd is None:
+            return 200, {"enabled": False}
+        db = wd.db
+        sessions = db.query("SELECT id, started, ended, status, distance_m, note, cells FROM "
+                            "wardrive_sessions ORDER BY started DESC LIMIT 20")
+        sid = session or wd.sid or (sessions[0]["id"] if sessions else None)
+        out = {"enabled": True, "running": wd.running(), "session": sid, "sessions": sessions,
+               "fix": wd.gps.fix() if wd.running() else None,
+               "live_distance_m": wd.live_distance_m()}
+        if sid:
+            track = db.query("SELECT ts, lat, lon, degraded FROM track WHERE session_id=? ORDER BY ts", (sid,))
+            step = max(1, len(track) // 500)
+            out["track"] = track[::step]
+            out["devices"] = db.query(
+                "SELECT radio, kind, MAX(name) AS name, MAX(best_rssi) AS best_rssi, COUNT(*) AS cells, "
+                "MIN(first_ts) AS first_ts, MAX(last_ts) AS last_ts, AVG(lat) AS lat, AVG(lon) AS lon "
+                "FROM device_cells WHERE session_id=? GROUP BY radio, dev_key ORDER BY "
+                "CASE WHEN kind IN ('findmy_separated','google_dult','tile','smarttag','chipolo') THEN 0 ELSE 1 END, "
+                "best_rssi DESC LIMIT 300", (sid,))
+            out["alerts"] = db.query(
+                "SELECT a.id, a.ts, a.kind, a.severity, a.dev_plain, a.detail, a.lat, a.lon, "
+                "k.acked FROM alerts a LEFT JOIN alert_acks k ON k.alert_id=a.id "
+                "WHERE a.session_id=? ORDER BY a.ts DESC LIMIT 200", (sid,))
+            out["summary"] = db.query(
+                "SELECT radio, COUNT(DISTINCT dev_key) AS devices FROM device_cells WHERE session_id=? "
+                "GROUP BY radio", (sid,))
+        return 200, out
+
+    def wardrive_export(self, session: str | None, fmt: str | None):
+        """Returns (code, payload) or (200, (bytes, filename, mimetype))."""
+        import os
+        import tempfile
+        from .wardrive import export
+        wd = self._wd()
+        if wd is None or fmt not in ("wigle", "kml", "ble"):
+            return 400, {"status": "error", "reason": "fmt must be wigle, kml or ble"}
+        rows = wd.db.query("SELECT * FROM wardrive_sessions WHERE id=?", (session or "",))
+        if not rows:
+            return 404, {"status": "not_found"}
+        s = rows[0]
+        if fmt == "ble":
+            cells = wd.db.query("SELECT dev_key AS dev_id, name, kind, kind AS tracker, first_ts AS first_seen, "
+                                "last_ts AS last_seen, best_rssi, lat, lon FROM device_cells "
+                                "WHERE session_id=? AND radio='ble'", (s["id"],))
+            return 200, (export.ble_csv(cells).encode(), f"havokbox-{s['id']}-ble.csv", "text/csv")
+        db_path = export.newest_kismetdb(wd.hw.get("kismet_log_dir", ""), s["started"] - 3600)
+        if not db_path:
+            return 404, {"status": "error", "reason": "no Kismet log for this session"}
+        out = os.path.join(tempfile.mkdtemp(prefix="hbx-"), "export")
+        argv = export.wigle_argv(db_path, out) if fmt == "wigle" else export.kml_argv(db_path, out)
+        wd.runner(argv, 120)
+        try:
+            with open(out, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            return 500, {"status": "error", "reason": "export tool produced no file"}
+        name = f"havokbox-{s['id']}." + ("csv" if fmt == "wigle" else "kml")
+        return 200, (data, name, "text/csv" if fmt == "wigle" else "application/vnd.google-earth.kml+xml")
 
     def job(self, job_id: str) -> tuple[int, dict]:
         j = self.jobs.get(job_id)
@@ -270,7 +406,15 @@ def build(cfg: BoxConfig | None = None):
     drainer = Drainer(store, commander, registry, scope, publisher=publisher)
     threading.Thread(target=drainer.run_forever, args=(cfg.drain_interval_s,),
                      daemon=True, name="havokbox-drain").start()
-    return Handlers(api, cfg, jobs, publisher=publisher)
+    h = Handlers(api, cfg, jobs, publisher=publisher)
+    from .wardrive.db import WardriveDB, load_key
+    from .wardrive.service import WardriveService
+    data_dir = os.path.dirname(cfg.db_path)
+    wdb = WardriveDB(store, cfg.db_path, load_key(os.path.join(data_dir, "secrets", "wardrive.key")))
+    h.wardrive = WardriveService(wdb, jobs, orch, store, cfg.hardware(), scope=scope,
+                                 mine=cfg.wardrive_mine, retention_days=cfg.wardrive_retention_days)
+    h.wardrive.boot()
+    return h
 
 
 SECURITY_HEADERS = {
@@ -335,6 +479,31 @@ def create_app(handlers: Handlers | None = None):
     async def get_job(request):
         return reply(h.job(request.path_params["job_id"]))
 
+    async def wd_start(request):
+        return reply(h.wardrive_start(await body(request)))
+
+    async def wd_stop(request):
+        return reply(h.wardrive_stop())
+
+    async def wd_ack(request):
+        return reply(h.wardrive_ack(await body(request)))
+
+    async def wd_delete(request):
+        return reply(h.wardrive_delete(await body(request)))
+
+    async def wd_state(request):
+        return reply(h.wardrive_state(request.query_params.get("session")))
+
+    async def wd_export(request):
+        from starlette.responses import Response
+        code, payload = h.wardrive_export(request.query_params.get("session"),
+                                          request.query_params.get("fmt"))
+        if code != 200:
+            return JSONResponse(payload, status_code=code)
+        data, name, mime = payload
+        return Response(data, media_type=mime,
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
     async def post_publish(request):
         return reply(h.publish())
 
@@ -351,6 +520,12 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/jobs/{job_id}", get_job),
         Route("/api/console", get_console),
         Route("/api/publish", post_publish, methods=["POST"]),
+        Route("/api/wardrive/start", wd_start, methods=["POST"]),
+        Route("/api/wardrive/stop", wd_stop, methods=["POST"]),
+        Route("/api/wardrive/ack", wd_ack, methods=["POST"]),
+        Route("/api/wardrive/delete", wd_delete, methods=["POST"]),
+        Route("/api/wardrive/state", wd_state),
+        Route("/api/wardrive/export", wd_export),
         Mount("/", StaticFiles(directory=static, html=True)),
     ]
     return Starlette(routes=routes, middleware=[Middleware(Guard)])

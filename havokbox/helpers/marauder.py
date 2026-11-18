@@ -75,6 +75,13 @@ def deauth(session, bssid: str, channel: int, client: str, seconds: int) -> dict
     return {"status": "sent", "bssid": bssid, "channel": int(channel), "client": client, "seconds": int(seconds)}
 
 
+def stop(session) -> dict:
+    """Safety: halt any running scan/attack (a killed deauth keeps transmitting until stopscan)."""
+    session.send("stopscan")
+    session.read_for(1)
+    return {"status": "stopped"}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="havokbox.helpers.marauder")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -82,6 +89,9 @@ def main(argv=None) -> int:
     p_scan = sub.add_parser("scan")
     p_scan.add_argument("--port", required=True)
     p_scan.add_argument("--seconds", type=int, required=True)
+
+    p_stop = sub.add_parser("stop")
+    p_stop.add_argument("--port", required=True)
 
     p_deauth = sub.add_parser("deauth")
     p_deauth.add_argument("--port", required=True)
@@ -102,6 +112,8 @@ def main(argv=None) -> int:
         try:
             if args.cmd == "scan":
                 result = scan(session, args.seconds)
+            elif args.cmd == "stop":
+                result = stop(session)
             else:
                 result = deauth(session, args.bssid, args.channel, args.client, args.seconds)
         finally:

@@ -1,0 +1,207 @@
+"""WardriveService end to end with fakes: radios held, passive only, privacy, follow-me, lifecycle."""
+import json
+import os
+import sqlite3
+import tempfile
+import unittest
+
+from havokbox.server import Handlers, Jobs, LaneHeld
+from havokbox.store import Store
+from havokbox.wardrive.db import WardriveDB
+from havokbox.wardrive.service import WardriveError, WardriveService
+from tests.helpers import make
+
+AP = "aa:bb:cc:dd:ee:01"
+CLIENT = "11:22:33:44:55:66"
+TAG = "c0:ff:ee:12:34:56"
+APPLE_SEPARATED = "4c0012190010aabbccddeeff00112233445566778899aabbccdd0000"
+
+
+class FakeReader:
+    def __init__(self, st): self.started = self.stopped = False
+    def start(self): self.started = True
+    def stop(self): self.stopped = True
+
+
+class FakeRunner:
+    def __init__(self):
+        self.calls = []
+        self.kismet_devices = []
+        self.kismet_alerts = []
+        self.ble = []
+
+    def __call__(self, argv, timeout):
+        self.calls.append(argv)
+        joined = " ".join(argv)
+        if "devices/last-time" in joined:
+            return json.dumps(self.kismet_devices)
+        if "alerts/last-time" in joined:
+            return json.dumps(self.kismet_alerts)
+        if "ble_scan" in joined:
+            return json.dumps({"devices": self.ble, "pcap": None})
+        return ""
+
+
+class ServiceTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, "box.db")
+        self.h, _, self.runner_tools, self.scope, _ = make()
+        self.h.api.store.close()
+        # real on-disk store so the read-only connection works
+        self.store = Store(self.path)
+        self.h.api.store = self.h.api.orch.store = self.store
+        self.db = WardriveDB(self.store, self.path, b"k" * 32)
+        self.run = FakeRunner()
+        self.wall = [1_800_000_000.0]
+        self.mono = [1000.0]
+        self.wd = WardriveService(self.db, self.h.jobs, self.h.api.orch, self.store, {"marauder_port": "/dev/ttyUSB1"},
+                                  scope=self.scope, runner=self.run, wall=lambda: self.wall[0],
+                                  mono=lambda: self.mono[0], gps_reader_factory=FakeReader)
+        self.h.wardrive = self.wd
+        # don't spawn collector threads in unit tests: drive ticks by hand
+        self.wd._loop = lambda fn, every: None
+
+    def tearDown(self):
+        if self.wd.running():
+            self.wd.stop()
+        self.store.close()
+
+    def fix(self, lat, lon, ts=None):
+        self.wd.gps.update({"class": "TPV", "ts": ts or self.wall[0], "lat": lat, "lon": lon, "mode": 3, "speed": 0})
+
+    # ---- safety -------------------------------------------------------------
+    def test_start_holds_radios_voids_approvals_and_silences_marauder(self):
+        self.store.grant_approval("t1", "recon.active", {})
+        code, r = self.h.wardrive_start({"note": "I-275"})
+        self.assertEqual(code, 200)
+        self.assertIsNone(self.store.open_approval("t1"))
+        self.assertTrue(self.h.api.orch.passive_only)
+        self.assertIn("stop", self.run.calls[0])                      # Marauder stopscan first
+        self.assertEqual(self.h.scan({"space": "wifi"})[0], 409)       # radio held
+        self.assertEqual(self.h.scan({"space": "ble"})[0], 409)
+        with self.assertRaises(LaneHeld):
+            self.h.jobs.submit("x", lambda: None, lane="esp")
+        self.assertEqual(self.h.wardrive_start({})[0], 409)            # one session at a time
+
+    def test_active_tools_refused_during_session_even_with_approval(self):
+        self.h.scan({"space": "wired", "mode": "standard"})
+        while self.h.jobs.run_one():
+            pass
+        p = self.h.state()[1]["proposals"][0]
+        self.h.wardrive_start({})
+        self.h.approve({"task_id": p["task_id"], "digest": p["digest"]})  # approved during the drive
+        before = len(self.runner_tools.cmds)
+        self.assertEqual(self.h.api.run(p["task_id"])["status"], "refused")
+        self.assertEqual(len(self.runner_tools.cmds), before)
+
+    def test_cannot_start_while_a_scan_is_queued(self):
+        self.h.jobs.submit("busy", lambda: None, lane="wifi")
+        code, r = self.h.wardrive_start({})
+        self.assertEqual(code, 409)
+        self.assertFalse(self.h.api.orch.passive_only)
+
+    def test_stop_releases_everything(self):
+        self.h.wardrive_start({})
+        self.wd.stop()
+        self.assertFalse(self.h.api.orch.passive_only)
+        self.assertEqual(self.h.scan({"space": "wifi"})[0], 202)
+        st = self.db.query("SELECT status FROM wardrive_sessions")
+        self.assertEqual(st[0]["status"], "stopped")
+
+    def test_boot_aborts_unfinished_session(self):
+        self.db.start_session("left running", now=self.wall[0])
+        self.wd.boot()
+        self.assertEqual(self.db.query("SELECT status FROM wardrive_sessions")[0]["status"], "aborted")
+        with self.assertRaises(sqlite3.IntegrityError):    # partial unique index
+            self.db.start_session("a"); self.db.start_session("b")
+
+    # ---- collection & privacy ----------------------------------------------
+    def test_kismet_cells_hash_clients_keep_aps_and_dedupe_alerts(self):
+        self.wd.start()
+        self.fix(27.95, -82.46)
+        self.run.kismet_devices = [
+            {"kismet.device.base.macaddr": AP.upper(), "kismet.device.base.type": "Wi-Fi AP",
+             "kismet.device.base.commonname": "LAB-NET", "kismet.device.base.channel": "6"},
+            {"kismet.device.base.macaddr": CLIENT, "kismet.device.base.type": "Wi-Fi Client"}]
+        self.run.kismet_alerts = [{"kismet.alert.header": "DEAUTHFLOOD", "kismet.alert.source_mac": AP,
+                                   "kismet.alert.text": "deauth flood", "kismet.alert.timestamp": self.wall[0]}]
+        self.wd.tick_kismet(); self.wd.tick_kismet()
+        keys = {r["dev_key"] for r in self.db.query("SELECT dev_key FROM device_cells")}
+        self.assertIn(AP, keys)
+        self.assertNotIn(CLIENT, keys)                       # client stored only as HMAC
+        self.assertTrue(any(k.startswith("h:") for k in keys))
+        names = [r["name"] for r in self.db.query("SELECT name FROM device_cells WHERE name IS NOT NULL")]
+        self.assertEqual(names, ["LAB-NET"])
+        alerts = self.db.query("SELECT * FROM alerts WHERE kind='DEAUTHFLOOD'")
+        self.assertEqual(len(alerts), 1)                     # deduped per 10-min bucket
+        # wardrive never writes findings
+        self.assertEqual(self.store.findings(), [])
+
+    def test_ble_tracker_classified_and_never_named(self):
+        self.wd.start()
+        self.fix(27.95, -82.46)
+        self.run.ble = [{"addr": TAG, "name": "Mike's AirTag", "rssi": -60, "company_ids": [0x004C],
+                         "uuid16": [], "mfg_data": [APPLE_SEPARATED], "random": True}]
+        self.wd.tick_ble()
+        rows = self.db.query("SELECT * FROM device_cells WHERE radio='ble'")
+        self.assertEqual(rows[0]["kind"], "findmy_separated")
+        self.assertIsNone(rows[0]["name"])
+        self.assertNotIn(TAG, json.dumps(rows))
+
+    # ---- follow-me ----------------------------------------------------------
+    def test_tracker_at_two_far_stops_raises_high_alert(self):
+        self.wd.start()
+        self.run.ble = [{"addr": TAG, "rssi": -55, "company_ids": [0x004C], "uuid16": [],
+                         "mfg_data": [APPLE_SEPARATED], "random": True}]
+        t0 = self.wall[0]
+        # stop A: 8 minutes parked, tracker heard
+        for i in range(0, 481, 30):
+            self.wall[0] = t0 + i; self.mono[0] += 30
+            self.fix(27.9500, -82.4600, self.wall[0]); self.wd.tick_track()
+            if i in (60, 300):
+                self.wd.tick_ble()
+        # drive ~5 km north
+        for i in range(1, 11):
+            self.wall[0] += 30; self.fix(27.9500 + i * 0.0045, -82.4600, self.wall[0]); self.wd.tick_track()
+        # stop B: 8 minutes parked, tracker heard again
+        t1 = self.wall[0]
+        for i in range(0, 481, 30):
+            self.wall[0] = t1 + i; self.mono[0] += 30
+            self.fix(27.9950, -82.4600, self.wall[0]); self.wd.tick_track()
+            if i in (60, 300):
+                self.wd.tick_ble()
+        self.wd.tick_follow()
+        a = self.db.query("SELECT * FROM alerts WHERE kind='follow'")
+        self.assertEqual(len(a), 1)
+        self.assertEqual(a[0]["severity"], "high")
+        self.assertEqual(a[0]["dev_plain"], TAG)             # plaintext kept only for the alerted device
+        self.assertIn("AirTag", a[0]["detail"])
+
+    # ---- dashboard ----------------------------------------------------------
+    def test_state_ack_delete(self):
+        self.wd.start()
+        self.fix(27.95, -82.46)
+        self.run.kismet_alerts = [{"kismet.alert.header": "DEAUTHFLOOD", "kismet.alert.source_mac": AP,
+                                   "kismet.alert.text": "x", "kismet.alert.timestamp": self.wall[0]}]
+        self.wd.tick_kismet()
+        code, st = self.h.wardrive_state()
+        self.assertTrue(st["running"])
+        aid = st["alerts"][0]["id"]
+        self.assertEqual(self.h.wardrive_ack({"alert_id": aid})[0], 200)
+        self.assertIsNotNone(self.h.wardrive_state()[1]["alerts"][0]["acked"])
+        sid = st["session"]
+        self.assertEqual(self.h.wardrive_delete({"session": sid})[0], 409)   # running
+        self.wd.stop()
+        self.assertEqual(self.h.wardrive_delete({"session": sid})[0], 200)
+        self.assertEqual(self.db.query("SELECT COUNT(*) AS n FROM alerts")[0]["n"], 0)
+
+    def test_purge_needs_a_set_clock(self):
+        sid = self.db.start_session("old", now=1_000.0)
+        self.db.end_session(sid, "stopped", 0, now=1_000.0)
+        self.assertEqual(self.db.purge(7, 1_000.0 + 30 * 86400, clock_ok=False), 0)
+        self.assertEqual(self.db.purge(7, 1_000.0 + 30 * 86400, clock_ok=True), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
