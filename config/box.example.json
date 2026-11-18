@@ -17,5 +17,8 @@
   "drain_interval_s": 30,
   "tls_cert": "/data/havokbox/tls/box.crt",
   "tls_key": "/data/havokbox/tls/box.key",
-  "allow_insecure_http": false
+  "allow_insecure_http": false,
+  "publish_url": "",
+  "publish_evidence_limit": 2000,
+  "box_name": "havok-box"
 }

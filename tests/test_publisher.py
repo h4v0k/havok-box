@@ -122,12 +122,73 @@ class PublishFlowTest(PublisherTest):
         self.pub.transport = self.ingest            # back online
         online = [False]
         d = Drainer(self.store, type("C", (), {"enabled": False})(), {}, self.h.api.scope,
-                    online=lambda: online[0], clock=lambda: 0, publisher=self.pub)
+                    online=lambda: False, clock=lambda: 0, publisher=self.pub,
+                    publish_online=lambda: online[0])   # Cloudflare reachable even if Anthropic isn't
         self.assertEqual(d.drain_once(), 0)          # offline: nothing sent
         online[0] = True
         self.assertEqual(d.drain_once(), 2)          # both triggers cleared by ONE publish
         self.assertEqual(len(self.ingest.calls), 1)
         self.assertFalse(self.h.state()[1]["publish"]["pending"])
+
+
+class ReviewFixTest(unittest.TestCase):
+    def setUp(self):
+        self.h, self.store, *_ = make()
+        self.ingest = FakeIngest()
+        self.pub = Publisher(self.store, "https://snap.example", "w",
+                             os.path.join(tempfile.mkdtemp(), "s.json"), transport=self.ingest,
+                             clock=lambda: 1_800_000_000.0)
+
+    def tearDown(self):
+        self.store.close()
+
+    def test_concurrent_publishers_send_once(self):
+        import threading
+        request_publish(self.store)
+        gate = threading.Event()
+        orig = self.ingest.__call__
+
+        def slow(url, body, headers):
+            gate.wait(1)
+            return orig(url, body, headers)
+        self.pub.transport = slow
+        results = []
+        ts = [threading.Thread(target=lambda: results.append(publish_pending(self.store, self.pub)))
+              for _ in range(2)]
+        for t in ts:
+            t.start()
+        gate.set()
+        for t in ts:
+            t.join()
+        self.assertEqual(len(self.ingest.calls), 1)
+        self.assertEqual(len(results), 2)
+
+    def test_refuses_with_unset_clock(self):
+        self.pub.clock = lambda: 1_000.0          # Pi booted before NTP
+        with self.assertRaises(PublishError) as cm:
+            self.pub.publish_now()
+        self.assertIn("NTP", str(cm.exception))
+        self.assertEqual(self.ingest.calls, [])
+
+    def test_409_explains_clock(self):
+        self.pub.transport = FakeIngest(status=409)
+        with self.assertRaises(PublishError) as cm:
+            self.pub.publish_now()
+        self.assertIn("clock", str(cm.exception))
+
+    def test_drain_failures_logged_as_publish_and_never_dropped(self):
+        request_publish(self.store)
+        self.pub.transport = FakeIngest(status=503)
+        now = [0.0]
+        d = Drainer(self.store, type("C", (), {"enabled": False})(), {}, None if False else self.h.api.scope,
+                    online=lambda: False, clock=lambda: now[0], publisher=self.pub,
+                    publish_online=lambda: True)
+        for _ in range(8):
+            d.drain_once()
+            now[0] += 10_000
+        self.assertTrue(any(e["kind"] == "publish" and "deferred" in e["detail"] for e in self.store.evidence()))
+        self.assertFalse(any(e["kind"] == "commander" for e in self.store.evidence()))
+        self.assertTrue(any(e["kind"] == "publish" for e in self.store.pending_queue()))
 
 
 if __name__ == "__main__":

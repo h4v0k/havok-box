@@ -40,10 +40,11 @@ def default_online(host: str = "api.anthropic.com", port: int = 443, timeout: fl
 
 class Drainer:
     def __init__(self, store, commander, registry: dict, scope, online=default_online,
-                 clock=time.monotonic, publisher=None):
+                 clock=time.monotonic, publisher=None, publish_online=None):
         self.store = store
         self.commander = commander
         self.publisher = publisher
+        self.publish_online = publish_online
         self.registry = registry
         self.gate = Gate(scope)
         self.online = online
@@ -71,39 +72,47 @@ class Drainer:
             return None
         return task
 
-    def _fail(self, entry_id: int, why: str) -> None:
+    def _fail(self, entry_id: int, why: str, kind: str = "commander") -> None:
         n = self._attempts.get(entry_id, 0) + 1
         self._attempts[entry_id] = n
         if n >= MAX_ATTEMPTS:
             self.store.drain_empty(entry_id)
-            self.store.log("commander", f"queue entry {entry_id} failed after {n} attempts: {why}")
+            self.store.log(kind, f"queue entry {entry_id} failed after {n} attempts: {why}")
             self._attempts.pop(entry_id, None)
             self._next_try.pop(entry_id, None)
         else:
             self._next_try[entry_id] = self.clock() + BASE_BACKOFF_S * (2 ** (n - 1))
-            self.store.log("commander", f"drain deferred ({n}/{MAX_ATTEMPTS}): {why}")
+            self.store.log(kind, f"drain deferred ({n}/{MAX_ATTEMPTS}): {why}")
 
     # ---- one pass ---------------------------------------------------------
+    PUBLISH_KEY = -1   # one backoff slot for publishing (triggers are interchangeable)
+
     def _drain_publish(self) -> int:
         from .publisher import publish_pending
         pending = [e for e in self.store.pending_queue() if e["kind"] == "publish"]
-        if not pending or self._next_try.get(pending[0]["id"], 0) > self.clock():
+        if not pending or self._next_try.get(self.PUBLISH_KEY, 0) > self.clock():
+            return 0
+        reachable = getattr(self.publisher, "reachable", None)
+        if not (self.publish_online() if self.publish_online else (reachable() if reachable else self.online())):
             return 0
         try:
             publish_pending(self.store, self.publisher)
         except Exception as exc:
-            self._fail(pending[0]["id"], f"publish: {exc}")
-            return 0
+            n = self._attempts.get(self.PUBLISH_KEY, 0) + 1
+            self._attempts[self.PUBLISH_KEY] = n
+            self._next_try[self.PUBLISH_KEY] = self.clock() + BASE_BACKOFF_S * (2 ** min(n - 1, 4))
+            self.store.log("publish", f"publish deferred (attempt {n}): {exc}")
+            return 0   # triggers stay queued; the newest state goes out on the next success
+        self._attempts.pop(self.PUBLISH_KEY, None)
+        self._next_try.pop(self.PUBLISH_KEY, None)
         return len(pending)
 
     def drain_once(self) -> int:
         """Drain what we can. Returns how many queue entries were completed."""
         pub = self.publisher is not None and getattr(self.publisher, "enabled", False)
         com = getattr(self.commander, "enabled", False)
-        if not (pub or com) or not self.online():
-            return 0
-        done = self._drain_publish() if pub else 0
-        if not com:
+        done = self._drain_publish() if pub else 0   # own reachability check (Cloudflare host)
+        if not com or not self.online():
             return done
         now = self.clock()
         for entry in self.store.pending_queue():

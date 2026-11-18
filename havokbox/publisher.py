@@ -16,12 +16,17 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
 
 SCHEMA = 1
 MAX_BYTES = 5 * 1024 * 1024
+# A Pi has no RTC battery: before NTP sync its clock can read 1970 or a stale date. Versions are
+# time-floored, so refuse to publish until the clock is plausible (after this build was written).
+CLOCK_FLOOR = 1_793_000_000   # 2026-10-26
+_PUBLISH_LOCK = threading.Lock()   # one publisher at a time: dashboard job vs drain thread
 
 
 class PublishError(RuntimeError):
@@ -111,6 +116,8 @@ class Publisher:
     def publish_now(self) -> dict:
         if not self.enabled:
             raise PublishError("publishing is not configured (publish_url / HAVOKBOX_PUBLISH_TOKEN)")
+        if self.clock() < CLOCK_FLOOR:
+            raise PublishError("box clock isn't set yet (waiting for NTP); not publishing")
         version = self.next_version()
         body = self.build(version)
         digest = hashlib.sha256(body).hexdigest()
@@ -121,14 +128,23 @@ class Publisher:
             "X-Snapshot-SHA256": digest,
         })
         if status != 201:
-            self.store.log("publish", f"snapshot v{version} rejected: HTTP {status} {text[:120]}")
-            raise PublishError(f"ingest returned HTTP {status}")
+            hint = (" — Cloudflare already holds a newer snapshot; check the box clock / NTP"
+                    if status == 409 else "")
+            self.store.log("publish", f"snapshot v{version} rejected: HTTP {status}{hint}")
+            raise PublishError(f"ingest returned HTTP {status}{hint}")
         self._save_state({"version": version, "sha256": digest, "at": self.clock(),
                           "bytes": len(body)})
         self.store.log("publish", f"snapshot v{version} published sha256={digest[:16]} "
                                   f"({len(body)} bytes)")
         return {"status": "ok", "version": version, "sha256": digest,
                 "summary": f"Published snapshot v{version}"}
+
+    def reachable(self) -> bool:
+        """Can we reach the publish host? (Separate from the commander's Anthropic check.)"""
+        from urllib.parse import urlparse
+        from .drain import default_online
+        u = urlparse(self.url)
+        return bool(u.hostname) and default_online(u.hostname, u.port or 443)
 
     def _http(self, url: str, body: bytes, headers: dict) -> tuple[int, str]:
         req = urllib.request.Request(url, data=body, method="POST", headers=headers)
@@ -147,10 +163,11 @@ def request_publish(store) -> None:
 
 def publish_pending(store, publisher) -> dict:
     """If any publish trigger is queued, publish the CURRENT state once and clear them all."""
-    pending = [e for e in store.pending_queue() if e["kind"] == "publish"]
-    if not pending:
-        return {"status": "idle"}
-    res = publisher.publish_now()          # raises PublishError on failure; entries stay queued
-    for e in pending:
-        store.drain_empty(e["id"])
-    return res
+    with _PUBLISH_LOCK:   # the second caller waits, then finds nothing pending
+        pending = [e for e in store.pending_queue() if e["kind"] == "publish"]
+        if not pending:
+            return {"status": "ok", "summary": "Already published"}
+        res = publisher.publish_now()      # raises PublishError on failure; entries stay queued
+        for e in pending:
+            store.drain_empty(e["id"])
+        return res

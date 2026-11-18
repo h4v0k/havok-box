@@ -19,7 +19,7 @@ approval, against in-scope lab targets.
 
 ## Status
 
-Phases 1, 3 and 4 built: box-served dashboard plus 19 gated tools across wired, Wi-Fi, BLE, sub-GHz, RTL-SDR and Marauder. Phase 2 (Cloudflare snapshot) is next. Tool output parsers are fixture-tested; verify them on real hardware. Run on the Pi:
+Phases 1, 3 and 4 built: box-served dashboard plus 19 gated tools across wired, Wi-Fi, BLE, sub-GHz, RTL-SDR and Marauder. Phase 2 (read-only Cloudflare snapshot) built. Tool output parsers are fixture-tested; verify them on real hardware. Run on the Pi:
 
 ```
 cp config/box.example.json config/box.json      # edit lan_cidrs / box_address
@@ -35,6 +35,9 @@ python3 -m unittest discover -s tests
 Interfaces and serial ports: `"hw"` in `config/box.json` (defaults in `havokbox/tools/__init__.py`;
 use `/dev/serial/by-id/...` paths for the Flipper, Marauder and Sniffle dongle). Kismet: create an API key in Kismet's web UI, then write `Cookie: KISMET=<key>` to
 `/data/havokbox/secrets/kismet.header` (`chmod 600`); the key never appears on a command line.
+Snapshot publishing (Phase 2): deploy the Worker in `cloudflare/` (see its README), set
+`publish_url` in `config/box.json` and `HAVOKBOX_PUBLISH_TOKEN` in the watchdog's environment. Publishing
+waits until the clock is NTP-synced (the Pi has no RTC battery). Then use Report → Publish.
 Adding a tool:
 `docs/tool-contract.md`. Console setup: `docs/console.md`. Dashboard design + checklist: `docs/design-dashboard.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
 
