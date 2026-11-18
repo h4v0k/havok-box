@@ -144,12 +144,16 @@ class Handlers:
         self.publisher = publisher
 
     # ---- auth -------------------------------------------------------------
-    def authorized(self, auth_header: str | None) -> bool:
-        if not self.cfg.token:          # no token configured -> fail closed
-            return False
+    def authorized(self, auth_header: str | None, path: str = "/api/") -> bool:
+        """Dashboard token reaches everything; the tablet's guard token only /api/guard/*."""
         if not auth_header or not auth_header.startswith("Bearer "):
             return False
-        return hmac.compare_digest(auth_header[7:].encode(), self.cfg.token.encode())
+        given = auth_header[7:].encode()
+        if self.cfg.token and hmac.compare_digest(given, self.cfg.token.encode()):
+            return True
+        guard = getattr(self.cfg, "guard_token", "")
+        return bool(guard) and path.startswith("/api/guard/") and \
+            hmac.compare_digest(given, guard.encode())
 
     # ---- endpoints --------------------------------------------------------
     def state(self) -> tuple[int, dict]:
@@ -353,6 +357,99 @@ class Handlers:
         name = f"havokbox-{s['id']}." + ("csv" if fmt == "wigle" else "kml")
         return 200, (data, name, "text/csv" if fmt == "wigle" else "application/vnd.google-earth.kml+xml")
 
+    # ---- Drive Guard (tablet) ------------------------------------------------
+    def guard_state(self, since) -> tuple[int, dict]:
+        from .wardrive.service import phrase_for
+        wd = self._wd()
+        try:
+            since = int(since or 0)
+        except (TypeError, ValueError):
+            since = 0
+        if wd is None:
+            return 200, {"mode": "idle", "status": "clear", "fix": {"mode": 0}, "can_touch": True,
+                         "stationary_60s": True, "alerts": [], "recent": [], "alpr_near": None,
+                         "alpr_session": 0, "offers": [], "server_ts": time.time()}
+        fix = wd.gps.fix()
+        rows = wd.db.query(
+            "SELECT a.id, a.ts, a.kind, a.severity, a.detail, k.acked FROM alerts a "
+            "LEFT JOIN alert_acks k ON k.alert_id=a.id WHERE a.session_id=? ORDER BY a.id DESC LIMIT 50",
+            (wd.sid or "",)) if wd.sid else []
+        def shape(r):
+            return {"id": r["id"], "ts": r["ts"], "kind": r["kind"], "severity": r["severity"],
+                    "phrase": phrase_for(r["kind"]), "detail": r["detail"], "acked": r["acked"] is not None}
+        alerts = [shape(r) for r in rows if r["id"] > since]
+        unacked_high = any(r["severity"] == "high" and r["acked"] is None for r in rows)
+        near = wd.alpr_near if (wd.alpr_near and wd.mono() - wd.alpr_near["mono"] < 15) else None
+        offers = [{"radio": o["radio"], "dev_key": o["dev_key"],
+                   "label": "Looks like your car's tire sensor" if o["radio"] == "tpms" else "Your device?"}
+                  for o in wd.db.offers()] if wd.can_touch() else []
+        mode = wd.mode or "idle"
+        return 200, {
+            "mode": mode,
+            "status": "alert" if unacked_high else ("sentry" if mode == "sentry" else "clear"),
+            "fix": {"mode": fix.get("mode") or 0, "speed_mps": fix.get("speed"), "used": fix.get("used")},
+            "can_touch": wd.can_touch(), "stationary_60s": wd.stationary_for() >= 60 or wd.no_fix_for() > 60,
+            "alerts": alerts, "recent": [shape(r) for r in rows[:3]],
+            "alpr_near": {"id": near["id"], "dist_m": near["dist_m"]} if near else None,
+            "alpr_session": getattr(wd.alpr_warner, "passes", 0) if wd.alpr_warner else 0,
+            "offers": offers, "server_ts": time.time()}
+
+    def _guard_parked(self):
+        wd = self._wd()
+        if wd is None:
+            return 404, {"status": "disabled"}
+        if not wd.can_touch():
+            return 409, {"status": "error", "reason": "park first"}   # server-side touch lock
+        return None
+
+    def guard_ack(self, body) -> tuple[int, dict]:
+        blocked = self._guard_parked()
+        if blocked:
+            return blocked
+        return self.wardrive_ack(body)
+
+    def guard_sentry(self, body) -> tuple[int, dict]:
+        blocked = self._guard_parked()
+        if blocked:
+            return blocked
+        arm = (body or {}).get("arm")
+        if not isinstance(arm, bool):
+            return 400, {"status": "error", "reason": "arm must be true or false"}
+        from .wardrive.service import WardriveError
+        wd = self._wd()
+        try:
+            if arm:
+                sid = wd.switch_mode("sentry") if wd.running() else wd.start(mode="sentry")
+                return 200, {"status": "armed", "session": sid}
+            if wd.running() and wd.mode == "sentry":
+                threading.Thread(target=wd.stop, daemon=True).start()
+            return 202, {"status": "disarming"}
+        except WardriveError as exc:
+            return 409, {"status": "error", "reason": str(exc)}
+
+    def guard_mine(self, body) -> tuple[int, dict]:
+        blocked = self._guard_parked()
+        if blocked:
+            return blocked
+        radio = (body or {}).get("radio")
+        key = self._str(body, "dev_key", 40)
+        label = (body or {}).get("label") or ""
+        if radio not in ("tpms", "ble", "wifi") or not key or not isinstance(label, str):
+            return 400, {"status": "error", "reason": "radio, dev_key required"}
+        self._wd().db.add_mine(radio, key, label[:60])
+        return 200, {"status": "ok"}
+
+    def alpr_refresh(self) -> tuple[int, dict]:
+        wd = self._wd()
+        if wd is None or not wd.alpr_path:
+            return 404, {"status": "disabled"}
+        from .wardrive.service import WardriveError
+        try:
+            n = wd.refresh_alpr()
+        except (WardriveError, OSError, ValueError) as exc:
+            return 502, {"status": "error", "reason": str(exc)[:200]}
+        return 200, {"status": "ok", "cameras": n}
+
     def job(self, job_id: str) -> tuple[int, dict]:
         j = self.jobs.get(job_id)
         return (200, j) if j else (404, {"status": "not_found"})
@@ -416,9 +513,24 @@ def build(cfg: BoxConfig | None = None):
     from .wardrive.service import WardriveService
     data_dir = os.path.dirname(cfg.db_path)
     wdb = WardriveDB(store, cfg.db_path, load_key(os.path.join(data_dir, "secrets", "wardrive.key")))
+    from .wardrive.notify import Discord
+    notifier = Discord(cfg.discord_webhook, map_links=cfg.discord_map_links)
     h.wardrive = WardriveService(wdb, jobs, orch, store, cfg.hardware(), scope=scope,
-                                 mine=cfg.wardrive_mine, retention_days=cfg.wardrive_retention_days)
+                                 mine=cfg.wardrive_mine, retention_days=cfg.wardrive_retention_days,
+                                 notifier=notifier, alpr_path=cfg.alpr_path,
+                                 quiet_zones=cfg.guard_quiet_zones)
     h.wardrive.boot()
+    h.wardrive.load_alpr()
+
+    def flush_forever():   # phone alerts go out whenever the car hotspot is up (queue in RAM)
+        while True:
+            try:
+                notifier.flush()
+            except Exception:
+                pass
+            time.sleep(15)
+    if notifier.enabled:
+        threading.Thread(target=flush_forever, daemon=True, name="havokbox-notify").start()
     return h
 
 
@@ -449,7 +561,7 @@ def create_app(handlers: Handlers | None = None):
     class Guard(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             if request.url.path.startswith("/api/") and not h.authorized(
-                    request.headers.get("authorization")):
+                    request.headers.get("authorization"), request.url.path):
                 resp = JSONResponse({"status": "unauthorized"}, status_code=401)
             else:
                 resp = await call_next(request)
@@ -513,6 +625,24 @@ def create_app(handlers: Handlers | None = None):
         return Response(data, media_type=mime,
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
+    async def guard_state(request):
+        return reply(await run_in_threadpool(h.guard_state, request.query_params.get("since")))
+
+    async def guard_ack(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.guard_ack, b))
+
+    async def guard_sentry(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.guard_sentry, b))
+
+    async def guard_mine(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.guard_mine, b))
+
+    async def alpr_refresh(request):
+        return reply(await run_in_threadpool(h.alpr_refresh))
+
     async def post_publish(request):
         return reply(h.publish())
 
@@ -535,6 +665,11 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/wardrive/delete", wd_delete, methods=["POST"]),
         Route("/api/wardrive/state", wd_state),
         Route("/api/wardrive/export", wd_export),
+        Route("/api/guard/state", guard_state),
+        Route("/api/guard/ack", guard_ack, methods=["POST"]),
+        Route("/api/guard/sentry", guard_sentry, methods=["POST"]),
+        Route("/api/guard/mine", guard_mine, methods=["POST"]),
+        Route("/api/alpr/refresh", alpr_refresh, methods=["POST"]),
         Mount("/", StaticFiles(directory=static, html=True)),
     ]
     return Starlette(routes=routes, middleware=[Middleware(Guard)])

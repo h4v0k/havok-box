@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guard</title>
+<link rel="stylesheet" href="guard.css">
+</head>
+<body>
+<main id="root" class="guard" data-view="token">
+  <form id="token-form" class="center" autocomplete="off">
+    <h1>Guard token</h1>
+    <label class="sr" for="token">Token</label>
+    <input id="token" type="password" autocomplete="off" required>
+    <p id="token-err" class="msg" role="alert"></p>
+    <button class="btn big primary" type="submit">Save token</button>
+  </form>
+  <section id="start" class="center" hidden>
+    <button id="start-btn" class="btn huge primary" type="button" disabled>Park to start</button>
+    <p class="hint">Needs a tap once to enable sound and speech.</p>
+  </section>
+  <section id="main" hidden>
+    <div id="status" class="status" role="status" aria-live="polite">...</div>
+    <p id="info" class="info"></p>
+    <p id="alpr" class="alpr" hidden></p>
+    <p id="msg" class="msg" role="alert"></p>
+    <ul id="alerts" class="alerts"></ul>
+    <div id="controls" class="controls"></div>
+    <p id="lock" class="hint">Controls unlock when parked</p>
+  </section>
+  <footer class="foot">
+    <p id="wake-hint" class="hint">For an always-on screen use Android Stay awake while charging.</p>
+    <p class="attr">Camera data &copy; OpenStreetMap contributors (ODbL)</p>
+  </footer>
+</main>
+<script src="guard.js"></script>
+</body>
+</html>

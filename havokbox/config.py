@@ -49,6 +49,13 @@ class BoxConfig:
     # Wardrive (receive-only). "mine": your own device MACs/BLE addresses (phone, watch, car).
     wardrive_mine: list = field(default_factory=list)
     wardrive_retention_days: int = 7
+    # Drive Guard (Phase 5)
+    guard_token: str = ""                    # tablet token: reaches /api/guard/* only
+    discord_webhook: str = ""                # env HAVOKBOX_DISCORD_WEBHOOK only (never in box.json)
+    discord_map_links: bool = False          # car position in phone alerts: opt-in (Guard #8)
+    guard_quiet_zones: list = field(default_factory=list)   # [{"lat","lon","radius_m"}] home/work
+    sentry_limit_s: int = 14 * 3600
+    alpr_path: str = "/data/havokbox/alpr.json"
 
     def hardware(self) -> dict:
         from .tools import DEFAULT_HW
@@ -71,6 +78,9 @@ class BoxConfig:
             cfg.console_password = env["HAVOKBOX_CONSOLE_PASSWORD"]
         if env.get("HAVOKBOX_PUBLISH_TOKEN"):
             cfg.publish_token = env["HAVOKBOX_PUBLISH_TOKEN"]
+        if env.get("HAVOKBOX_GUARD_TOKEN"):
+            cfg.guard_token = env["HAVOKBOX_GUARD_TOKEN"]
+        cfg.discord_webhook = env.get("HAVOKBOX_DISCORD_WEBHOOK", "")   # env only, by design
         if env.get("ANTHROPIC_API_KEY"):
             cfg.anthropic_api_key = env["ANTHROPIC_API_KEY"]
         cfg.validate()

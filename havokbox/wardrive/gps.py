@@ -44,7 +44,9 @@ def parse_line(line):
         return {"class": "TPV", "ts": _parse_time(obj.get("time")),
                 "lat": _num(obj.get("lat")), "lon": _num(obj.get("lon")),
                 "mode": mode if isinstance(mode, int) and 0 <= mode <= 3 else 0,
-                "speed": _num(obj.get("speed"))}
+                "speed": _num(obj.get("speed")),
+                "eph": _num(obj.get("eph")),      # horizontal error estimate (m)
+                "track": _num(obj.get("track"))}  # course over ground (deg true)
     if cls == "SKY":
         sats = obj.get("satellites")
         used, snrs = 0, []
@@ -80,7 +82,8 @@ class GpsState:
         now = self._clock()
         with self._lock:
             if parsed.get("class") == "TPV":
-                self._fix = {k: parsed.get(k) for k in ("ts", "lat", "lon", "mode", "speed")}
+                self._fix = {k: parsed.get(k) for k in ("ts", "lat", "lon", "mode", "speed", "eph", "track")}
+                self._fix["mono"] = now
                 if parsed.get("mode") == 3:
                     self._last3d = now
             elif parsed.get("class") == "SKY":
@@ -93,7 +96,8 @@ class GpsState:
 
     def mark_no_fix(self):
         with self._lock:
-            self._fix = {"ts": None, "lat": None, "lon": None, "mode": 0, "speed": None}
+            self._fix = {"ts": None, "lat": None, "lon": None, "mode": 0, "speed": None,
+                         "eph": None, "track": None, "mono": self._clock()}
 
     def fix(self):
         now = self._clock()

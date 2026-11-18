@@ -77,6 +77,22 @@ class Watchdog:
         self._with_store(lambda s: s.log(kind, detail))
 
     # ---- lifecycle ----------------------------------------------------------
+    def _limit(self) -> float:
+        """Sentry (parked, Guard #5) gets its own longer limit; everything else session_limit_s."""
+        def q(store):
+            try:
+                r = store.cx.execute("SELECT 1 FROM wardrive_sessions WHERE status='running' "
+                                     "AND mode='sentry'").fetchone()
+                return r is not None
+            except Exception:
+                return False
+        try:
+            sentry = self._with_store(q)
+        except Exception:
+            sentry = False
+        return getattr(self.cfg, "sentry_limit_s", self.cfg.session_limit_s) if sentry \
+            else self.cfg.session_limit_s
+
     def boot(self) -> None:
         self._void("boot")
         self.started = self.clock()
@@ -91,8 +107,8 @@ class Watchdog:
         if self.stopped:
             return False
         now = self.clock()
-        if now - self.started >= self.cfg.session_limit_s:
-            self.shutdown(f"session time limit ({self.cfg.session_limit_s}s) reached")
+        if now - self.started >= self._limit():
+            self.shutdown(f"session time limit ({int(self._limit())}s) reached")
             return False
         if self.server.poll() is not None:
             self.restarts = [t for t in self.restarts if now - t < self.window_s] + [now]

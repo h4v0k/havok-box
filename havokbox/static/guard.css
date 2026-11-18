@@ -1,0 +1,45 @@
+/* In-car display. rem units so enlarged system text scales everything. Steady colours only, no flashing. */
+:root { --bg: #0b0f14; --text: #f4f7fa; --dim: #9aa7b4; --line: #2a3643; --panel: #151d26;
+  --ok: #1f9d55; --alert: #c62828; --sentry: #1565c0; --nolink: #e0a000; --accent: #3fb6ff; }
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 1.25rem/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+[hidden] { display: none !important; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.guard { min-height: 100vh; display: flex; flex-direction: column; padding: 1rem; }
+.guard[data-state="alert"] { background: #3a0d0d; }
+.center { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; }
+h1 { font-size: 2rem; margin: 0; }
+input { width: 100%; max-width: 30rem; min-height: 3.5rem; font: inherit; padding: .5rem 1rem;
+  background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: .8rem; }
+.btn { min-height: 4rem; padding: .8rem 1.4rem; border-radius: 1rem; border: 2px solid var(--line);
+  background: var(--panel); color: var(--text); font: inherit; font-weight: 700; cursor: pointer; }
+.btn.big { min-width: 14rem; font-size: 1.5rem; }
+.btn.huge { width: 100%; max-width: 40rem; min-height: 10rem; font-size: 3rem; }
+.btn.primary { background: var(--accent); color: #001522; border-color: transparent; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn:focus-visible { outline: 4px solid #ffcf3f; outline-offset: 3px; }
+.status { font-size: 5.5rem; font-weight: 900; text-align: center; padding: 2rem 1rem; border-radius: 1.2rem;
+  letter-spacing: .04em; overflow-wrap: anywhere; }
+.status.clear { background: var(--ok); color: #fff; }
+.status.alert { background: var(--alert); color: #fff; }
+.status.sentry { background: var(--sentry); color: #fff; }
+.status.nolink { background: var(--nolink); color: #1a1200; }
+.info { color: var(--dim); font-size: 1.4rem; text-align: center; margin: .8rem 0; }
+.alpr { font-size: 2rem; font-weight: 800; text-align: center; background: var(--panel);
+  border: 2px solid var(--nolink); border-radius: 1rem; padding: .8rem; margin: .4rem 0; }
+.msg { color: #ffb3b3; font-size: 1.3rem; text-align: center; min-height: 1.5rem; margin: .3rem 0; }
+.alerts { list-style: none; margin: .5rem 0; padding: 0; display: grid; gap: .7rem; }
+.alerts li { background: var(--panel); border: 1px solid var(--line); border-left: 1rem solid var(--dim);
+  border-radius: 1rem; padding: .8rem 1rem; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; }
+.alerts li.high { border-left-color: var(--alert); }
+.alerts li.medium { border-left-color: var(--nolink); }
+.alerts .phrase { flex: 1 1 14rem; font-size: 2.2rem; font-weight: 800; overflow-wrap: anywhere; }
+.alerts .time { color: var(--dim); font-size: 1.4rem; }
+.alerts li.acked .phrase { opacity: .55; }
+.controls { display: flex; flex-wrap: wrap; gap: .8rem; margin-top: .5rem; }
+.controls .btn { flex: 1 1 14rem; font-size: 1.5rem; }
+.hint { color: var(--dim); font-size: 1rem; text-align: center; margin: .5rem 0; }
+.foot { margin-top: auto; padding-top: 1rem; }
+.attr { color: var(--dim); font-size: .8rem; text-align: center; margin: .2rem 0 0; }

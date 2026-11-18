@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS wd_alerts ON alerts(session_id, ts);
 CREATE TABLE IF NOT EXISTS alert_acks (alert_id INTEGER PRIMARY KEY, acked REAL);
+CREATE TABLE IF NOT EXISTS wardrive_mine (
+    radio TEXT, dev_key TEXT, label TEXT, added REAL, PRIMARY KEY(radio, dev_key)
+);
+CREATE TABLE IF NOT EXISTS mine_candidates (
+    radio TEXT, dev_key TEXT, session_id TEXT, PRIMARY KEY(radio, dev_key, session_id)
+);
 CREATE TABLE IF NOT EXISTS rf_floor (
     session_id TEXT, ts REAL, band TEXT, median_db REAL, lat REAL, lon REAL
 );
@@ -74,6 +80,9 @@ class WardriveDB:
         self.key = key
         with store._lock, store.cx:
             store.cx.executescript(SCHEMA)
+            cols = {r[1] for r in store.cx.execute("PRAGMA table_info(wardrive_sessions)")}
+            if "mode" not in cols:   # migration (Drive Guard #5): CREATE IF NOT EXISTS won't add it
+                store.cx.execute("ALTER TABLE wardrive_sessions ADD COLUMN mode TEXT DEFAULT 'drive'")
 
     # ---- identifiers -------------------------------------------------------
     def dev_key(self, radio: str, kind: str | None, dev_id: str) -> str:
@@ -100,11 +109,11 @@ class WardriveDB:
         with self.store._lock, self.store.cx:
             return fn(self.store.cx)
 
-    def start_session(self, note: str = "", now: float | None = None) -> str:
+    def start_session(self, note: str = "", now: float | None = None, mode: str = "drive") -> str:
         sid = secrets.token_hex(8)
         def go(cx):
-            cx.execute("INSERT INTO wardrive_sessions(id,started,status,note) VALUES(?,?,?,?)",
-                       (sid, now or time.time(), "running", (note or "")[:120]))
+            cx.execute("INSERT INTO wardrive_sessions(id,started,status,note,mode) VALUES(?,?,?,?,?)",
+                       (sid, now or time.time(), "running", (note or "")[:120], mode))
         self._write(go)   # raises sqlite3.IntegrityError if one is already running
         return sid
 
@@ -171,6 +180,24 @@ class WardriveDB:
                 (sid, ts, kind, severity, dev_key, dev_plain, (detail or "")[:300], lat, lon, bucket))
             return cur.rowcount == 1
         return self._write(go)
+
+    # ---- "mine" (dashboard-written) -------------------------------------
+    def mine_keys(self) -> set:
+        return {(r["radio"], r["dev_key"]) for r in self.store._read("SELECT radio, dev_key FROM wardrive_mine")}
+
+    def add_mine(self, radio: str, dev_key: str, label: str = ""):
+        self._write(lambda cx: cx.execute("INSERT OR REPLACE INTO wardrive_mine VALUES(?,?,?,?)",
+                                          (radio, dev_key, (label or "")[:60], time.time())))
+
+    def add_candidate(self, radio: str, dev_key: str, sid: str):
+        self._write(lambda cx: cx.execute("INSERT OR IGNORE INTO mine_candidates VALUES(?,?,?)",
+                                          (radio, dev_key, sid)))
+
+    def offers(self, min_sessions: int = 2) -> list:
+        return self.store._read(
+            "SELECT c.radio, c.dev_key, COUNT(*) AS sessions FROM mine_candidates c "
+            "LEFT JOIN wardrive_mine m ON m.radio=c.radio AND m.dev_key=c.dev_key "
+            "WHERE m.dev_key IS NULL GROUP BY c.radio, c.dev_key HAVING COUNT(*) >= ?", (min_sessions,))
 
     def ack(self, alert_id: int):   # dashboard is the only writer of alert_acks
         self._write(lambda cx: cx.execute("INSERT OR REPLACE INTO alert_acks VALUES(?,?)",
