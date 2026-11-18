@@ -115,3 +115,88 @@ class PlannerFlowTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFixTest(unittest.TestCase):
+    def test_whatweb_never_follows_redirects(self):
+        from havokbox.tools import wired
+        for mode in ("stealth", "standard"):
+            argv = wired.build_web({"ip": "10.10.0.50", "port": 80}, mode, SCOPE, {})[0]
+            self.assertIn("--follow-redirect=never", argv)
+            self.assertIn("-q", argv)
+
+    def test_nmap_vuln_has_host_timeout(self):
+        from havokbox.tools import wired
+        for mode in ("stealth", "standard"):
+            self.assertIn("--host-timeout", wired.build_vuln({"ip": "10.10.0.50"}, mode, SCOPE, {})[0])
+
+    def test_capture_deauth_kills_airodump_when_aireplay_fails(self):
+        import tempfile
+        from havokbox.helpers import wifi_capture
+
+        class P:
+            terminated = False
+            def terminate(self): P.terminated = True
+            def wait(self, timeout=None): return 0
+            def kill(self): pass
+
+        def boom(argv, timeout):
+            raise FileNotFoundError("aireplay-ng")
+        with self.assertRaises(FileNotFoundError):
+            wifi_capture.do_capture_deauth("wlan1mon", "aa:bb:cc:dd:ee:ff", 6, 30, tempfile.mkdtemp(),
+                                           popen=lambda a: P(), runner=boom, sleep=lambda s: None)
+        self.assertTrue(P.terminated)
+
+    def test_pmkid_counts_as_captured(self):
+        from havokbox.helpers import wifi_capture
+        ok, n = wifi_capture._verify_capture("x", runner=lambda a, t: "WPA (0 handshake, with PMKID)")
+        self.assertTrue(ok)
+
+    def test_aireplay_sending_lines_counted(self):
+        from havokbox.tools import wifi
+        out = ("12:00:01  Sending 64 directed DeAuth (code 7). STMAC: [11:11:11:11:11:11] [ 0| 0 ACKs]\n"
+               "12:00:02  Sending 64 directed DeAuth (code 7). STMAC: [11:11:11:11:11:11] [ 1| 0 ACKs]\n")
+        self.assertEqual(wifi.parse_deauth_sent(out), 128)
+
+    def test_marauder_selected_line_parses(self):
+        from havokbox.helpers import marauder
+        aps = marauder.parse_ap_list("[0][CH:6] LAB-NET -48 (selected)\n[1][CH:11] Other -70")
+        self.assertEqual(len(aps), 2)
+
+    def test_ap_watch_proposes_esp_deauth_on_24ghz(self):
+        f = {"kind": "ap_watch", "data": {"bssid": "aa:bb:cc:dd:ee:ff", "channel": 6, "clients": []}}
+        self.assertIn("marauder.deauth", {p["tool"] for p in plan([f], SCOPE, "stealth")})
+        f["data"]["channel"] = 36
+        self.assertNotIn("marauder.deauth", {p["tool"] for p in plan([f], SCOPE, "stealth")})
+
+    def test_subghz_ids_case_insensitive(self):
+        sc = Scope({"rf": {"subghz_ids": ["Gate_Fob"], "tx_bands": [{"min_mhz": 433, "max_mhz": 435}]},
+                    "auto_allow": ["recon.passive"]})
+        f = {"kind": "subghz", "data": {"captures": [{"id": "Gate_Fob", "freq_mhz": 433.92}]}}
+        steps = plan([f], sc)
+        self.assertEqual(len(steps), 1)
+        reg = default_registry()
+        t = make_task(reg, "subghz.replay", steps[0]["target"], "stealth", "r")
+        self.assertTrue(Gate(sc).evaluate(t).allowed)
+
+    def test_ble_rssi_from_sniffle_field(self):
+        from havokbox.helpers import ble_scan
+        devs = ble_scan.parse_tshark_fields("c0:ff:ee:00:00:01\tLock\t-52\t\nc0:ff:ee:00:00:02\t\t\t-70\n")
+        self.assertEqual(devs[0]["rssi"], -52)
+        self.assertEqual(devs[1]["rssi"], -70)
+
+    def test_flipper_key_on_next_line_attached(self):
+        from havokbox.helpers import flipper
+        recs = flipper.parse_received("Princeton 24bit\nKey:0x00ABCD\n")
+        self.assertEqual(recs[0]["key"], "0x00ABCD")
+
+    def test_kismet_raw_rest_shape(self):
+        from havokbox.tools import kismet
+        raw = [{"kismet.device.base.type": "Wi-Fi AP", "kismet.device.base.macaddr": "AA:BB:CC:DD:EE:FF",
+                "kismet.device.base.commonname": "LAB-NET", "kismet.device.base.channel": "6",
+                "kismet.device.base.signal": {"kismet.common.signal.last_signal": -40}},
+               {"kismet.device.base.type": "Wi-Fi Client", "kismet.device.base.macaddr": "11:11:11:11:11:11"}]
+        aps, clients = kismet.parse_devices(raw)
+        self.assertEqual(aps[0]["bssid"], "aa:bb:cc:dd:ee:ff")
+        self.assertEqual(aps[0]["signal"], -40)
+        self.assertEqual(len(clients), 1)

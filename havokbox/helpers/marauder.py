@@ -20,7 +20,7 @@ BROADCAST = "ff:ff:ff:ff:ff:ff"
 _MAC_RE = re.compile(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
 _AP_LINE = re.compile(
     r"^\s*\[(?P<idx>\d+)\]\s*\[CH:\s*(?P<ch>\d+)\]\s*(?P<ssid>.*?)\s+(?P<rssi>-?\d+)"
-    r"(?:\s+(?P<bssid>([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}))?\s*$"
+    r"(?:\s+(?P<bssid>([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}))?(?:\s*\(selected\))?\s*$"
 )
 
 

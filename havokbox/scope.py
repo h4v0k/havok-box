@@ -40,7 +40,7 @@ class Scope:
         self.ssids = set(wifi.get("ssids") or [])
         rf = data.get("rf") or {}
         self.ble = {a.lower() for a in (rf.get("ble_addresses") or [])}
-        self.subghz = {str(s) for s in (rf.get("subghz_ids") or [])}
+        self.subghz = {str(s).lower() for s in (rf.get("subghz_ids") or [])}
         self.tx_bands = [
             (float(b["min_mhz"]), float(b["max_mhz"])) for b in (rf.get("tx_bands") or [])
         ]

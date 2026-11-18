@@ -80,9 +80,9 @@ class TestListen(unittest.TestCase):
 class TestVuln(unittest.TestCase):
     def test_build(self):
         self.assertEqual(wired.build_vuln({"ip": "10.0.0.5"}, "standard", None, HW),
-                         [["nmap", "-sV", "--script", "vuln", "-T4", "-oX", "-", "10.0.0.5"]])
+                         [["nmap", "-sV", "--script", "vuln", "-T4", "--host-timeout", "800s", "-oX", "-", "10.0.0.5"]])
         self.assertEqual(wired.build_vuln({"ip": "10.0.0.5"}, "stealth", None, HW),
-                         [["nmap", "-sS", "-T2", "--top-ports", "100", "--script", "vuln", "-oX", "-", "10.0.0.5"]])
+                         [["nmap", "-sS", "-T2", "--top-ports", "100", "--script", "vuln", "--host-timeout", "800s", "-oX", "-", "10.0.0.5"]])
 
     def test_parse(self):
         f = wired.parse_vuln(VULN_XML)
@@ -140,10 +140,10 @@ class TestSmb(unittest.TestCase):
 class TestWeb(unittest.TestCase):
     def test_build(self):
         std = wired.build_web({"ip": "10.0.0.5"}, "standard", None, HW)
-        self.assertEqual(std, [["whatweb", "--color=never", "--no-errors", "-a", "3",
-                                "--log-json=/dev/stdout", "http://10.0.0.5:80/"]])
+        self.assertEqual(std, [["whatweb", "-q", "--color=never", "--no-errors", "--follow-redirect=never",
+                                "-a", "3", "--log-json=/dev/stdout", "http://10.0.0.5:80/"]])
         st = wired.build_web({"ip": "10.0.0.5", "port": 8443}, "stealth", None, HW)
-        self.assertEqual(st[0][4], "1")
+        self.assertEqual(st[0][st[0].index("-a") + 1], "1")
         self.assertEqual(st[0][-1], "https://10.0.0.5:8443/")
         self.assertTrue(wired.build_web({"ip": "1.2.3.4", "port": 443}, "standard", None, HW)[0][-1].startswith("https"))
         self.assertTrue(wired.build_web({"ip": "1.2.3.4", "port": 8080}, "standard", None, HW)[0][-1].startswith("http:"))

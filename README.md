@@ -19,18 +19,22 @@ approval, against in-scope lab targets.
 
 ## Status
 
-Phase 1 (Wi-Fi + wired recon, box-served dashboard) built. Run on the Pi:
+Phases 1, 3 and 4 built: box-served dashboard plus 19 gated tools across wired, Wi-Fi, BLE, sub-GHz, RTL-SDR and Marauder. Phase 2 (Cloudflare snapshot) is next. Tool output parsers are fixture-tested; verify them on real hardware. Run on the Pi:
 
 ```
 cp config/box.example.json config/box.json      # edit lan_cidrs / box_address
 cp config/scope.example.yaml config/scope.yaml  # edit to your lab
-pip install starlette uvicorn pyyaml
+pip install starlette uvicorn pyyaml pyserial
+sudo apt install nmap tcpdump kismet aircrack-ng smbclient whatweb tshark bluez rtl-sdr rtl-433 ttyd
+# Sniffle: clone to /opt/sniffle and flash the SONOFF dongle (see the Sniffle README)
 python3 -m havokbox.provision                   # token + self-signed cert; prints the SHA-256 fingerprint
 python3 -m havokbox.watchdog                    # serves the dashboard on https://<box>:8443
 python3 -m unittest discover -s tests
 ```
 
-Console setup: `docs/console.md`. Dashboard design + checklist: `docs/design-dashboard.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
+Interfaces and serial ports: `"hw"` in `config/box.json` (defaults in `havokbox/tools/__init__.py`;
+use `/dev/serial/by-id/...` paths for the Flipper, Marauder and Sniffle dongle). Adding a tool:
+`docs/tool-contract.md`. Console setup: `docs/console.md`. Dashboard design + checklist: `docs/design-dashboard.md`. Requirements: `docs/requirements.md`. Design: `docs/architecture.md`.
 
 ## Hardware
 

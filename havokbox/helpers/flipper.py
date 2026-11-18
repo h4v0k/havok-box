@@ -41,6 +41,11 @@ def parse_received(text: str) -> list[dict]:
                 "key": (m.group("key") or "").strip() or None,
                 "raw": s[:120],
             })
+        elif (km := re.match(r"^Key\s*[:=]\s*(?P<key>(?:0x)?[0-9A-Fa-f ]{2,})\s*$", s, re.I)) \
+                and out and out[-1].get("protocol") and not out[-1].get("key"):
+            # Flipper prints "Princeton 24bit" then "Key:0x..." on the next line: attach it
+            out[-1]["key"] = km.group("key").strip()
+            out[-1]["raw"] = (out[-1]["raw"] + " | " + s)[:120]
         elif re.search(r"\bkey\b\s*[:=]", s, re.I) or re.search(r"\bprotocol\b", s, re.I):
             out.append({"raw": s[:120]})
         if len(out) >= 64:
@@ -94,6 +99,7 @@ def replay(session, cap_id: str, freq_mhz: float) -> dict:
         return {"status": "refused", "reason": "invalid capture id"}
 
     path = f"/ext/subghz/{cap_id}.sub"
+    session.read_until(PROMPT, 3)            # drain the CLI banner's own ">: " prompt first
     session.send(f"storage read {path}")
     body = session.read_until(PROMPT, 10)
     fhz = parse_frequency_hz(body)

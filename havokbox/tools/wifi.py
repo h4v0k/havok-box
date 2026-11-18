@@ -18,6 +18,7 @@ from ..store import new_id
 HELPER_ARGV = ["python3", "-m", "havokbox.helpers.wifi_capture"]
 HANDSHAKE_RE = re.compile(r"\((\d+)\s+handshake", re.I)
 SENT_RE = re.compile(r"(\d+)\s+packets\s+sent", re.I)
+SENDING_RE = re.compile(r"Sending\s+(?:(\d+)\s+directed\s+)?DeAuth", re.I)
 
 
 def _mon(hw: dict) -> str:
@@ -137,7 +138,13 @@ def build_deauth(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
 
 def parse_deauth_sent(stdout: str) -> int:
     m = SENT_RE.search(stdout or "")
-    return int(m.group(1)) if m else 0
+    if m:
+        return int(m.group(1))
+    # aireplay -0 prints one "Sending [64 directed] DeAuth ..." line per burst
+    total = 0
+    for s in SENDING_RE.finditer(stdout or ""):
+        total += int(s.group(1)) if s.group(1) else 1
+    return total
 
 
 def deauth(task: dict, ctx) -> dict:

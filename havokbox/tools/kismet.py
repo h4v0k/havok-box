@@ -13,20 +13,36 @@ from ..store import new_id
 KISMET_CMD = ["curl", "-s", "http://localhost:2501/devices/views/all/devices.json"]
 
 
+def _normalise(d: dict) -> tuple[str, dict]:
+    """Accept Kismet's raw REST shape (kismet.device.base.*) or the already-flat shape."""
+    if "kismet.device.base.macaddr" in d or "kismet.device.base.type" in d:
+        sig = d.get("kismet.device.base.signal")
+        signal = sig.get("kismet.common.signal.last_signal") if isinstance(sig, dict) else None
+        kind = str(d.get("kismet.device.base.type") or "")
+        dev = {
+            "ssid": d.get("kismet.device.base.commonname") or d.get("kismet.device.base.name") or None,
+            "bssid": str(d.get("kismet.device.base.macaddr") or "").lower() or None,
+            "channel": d.get("kismet.device.base.channel"),
+            "signal": signal,
+        }
+        return ("AP" if kind.endswith("AP") else "client"), dev
+    dev = {
+        "ssid": d.get("ssid"),
+        "bssid": (d.get("bssid") or "").lower() or None,
+        "channel": d.get("channel"),
+        "signal": d.get("signal"),
+    }
+    return ("AP" if d.get("type") == "AP" else "client"), dev
+
+
 def parse_devices(devices: list[dict]) -> tuple[list[dict], list[dict]]:
     aps, clients = [], []
-    for d in devices:
-        dev = {
-            "ssid": d.get("ssid"),
-            "bssid": (d.get("bssid") or "").lower() or None,
-            "channel": d.get("channel"),
-            "signal": d.get("signal"),
-        }
-        if d.get("type") == "AP":
-            aps.append(dev)
-        else:
-            clients.append(dev)
-    return aps, clients
+    for d in devices if isinstance(devices, list) else []:
+        if not isinstance(d, dict):
+            continue
+        kind, dev = _normalise(d)
+        (aps if kind == "AP" else clients).append(dev)
+    return aps[:256], clients[:256]
 
 
 def detect_evil_twins(aps: list[dict], known_ssids: set, known_bssids: set) -> list[dict]:

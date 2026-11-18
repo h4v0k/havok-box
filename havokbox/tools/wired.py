@@ -103,8 +103,9 @@ def listen(task: dict, ctx) -> dict:
 def build_vuln(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
     ip = target["ip"]
     if mode == "stealth":
-        return [["nmap", "-sS", "-T2", "--top-ports", "100", "--script", "vuln", "-oX", "-", ip]]
-    return [["nmap", "-sV", "--script", "vuln", "-T4", "-oX", "-", ip]]
+        return [["nmap", "-sS", "-T2", "--top-ports", "100", "--script", "vuln",
+                 "--host-timeout", "800s", "-oX", "-", ip]]
+    return [["nmap", "-sV", "--script", "vuln", "-T4", "--host-timeout", "800s", "-oX", "-", ip]]
 
 
 def parse_vuln(xml: str) -> list[dict]:
@@ -204,8 +205,9 @@ def _web_url(target: dict) -> str:
 
 
 def build_web(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
-    return [["whatweb", "--color=never", "--no-errors", "-a", "1" if mode == "stealth" else "3",
-             "--log-json=/dev/stdout", _web_url(target)]]
+    # Never follow redirects: the gate only checked this ip, a 302 could point anywhere.
+    return [["whatweb", "-q", "--color=never", "--no-errors", "--follow-redirect=never",
+             "-a", "1" if mode == "stealth" else "3", "--log-json=/dev/stdout", _web_url(target)]]
 
 
 def _web_records(stdout: str) -> list[dict]:

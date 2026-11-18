@@ -46,11 +46,12 @@ def parse_tshark_fields(text: str) -> list[dict]:
             continue
         name = parts[1].strip().split(",")[0] if len(parts) > 1 else ""
         rssi = None
-        if len(parts) > 2:
+        for col in parts[2:4]:   # btle_rf.signal_dbm (Sniffle DLT 256), then nordic_ble.rssi
             try:
-                rssi = int(float(parts[2].strip().split(",")[0]))
+                rssi = int(float(col.strip().split(",")[0]))
+                break
             except ValueError:
-                rssi = None
+                continue
         cur = seen.get(addr)
         if cur is None:
             seen[addr] = {"addr": addr, "name": name, "rssi": rssi, "seen": 1}
@@ -76,7 +77,7 @@ def scan(sniffle_dir: str, port: str, seconds: int, work_dir: str, runner=real_r
            seconds + 15)
     out = runner(["tshark", "-r", pcap, "-T", "fields", "-E", "separator=/t",
                   "-e", "btle.advertising_address", "-e", "btcommon.eir_ad.entry.device_name",
-                  "-e", "nordic_ble.rssi"], 60)
+                  "-e", "btle_rf.signal_dbm", "-e", "nordic_ble.rssi"], 60)
     return {"devices": parse_tshark_fields(out), "pcap": pcap}
 
 
