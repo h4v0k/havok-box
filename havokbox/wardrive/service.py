@@ -140,12 +140,37 @@ class WardriveService:
         self._fast_since = None
         self._moved_alerted = False
         self._tracker_seen: dict[str, float] = {}       # sentry: tracker key -> first mono seen
-        self._tpms_windows = 0
-        self._tpms_heard: dict[str, int] = collections.Counter()
+        self._tpms_windows = collections.Counter()               # freq -> windows run
+        self._tpms_heard: dict = collections.defaultdict(collections.Counter)  # key -> freq -> n
         self._last_floor = None
         self._sdr_i = 0
 
     # ---- lifecycle ---------------------------------------------------------
+    def _sample(self) -> None:
+        """Speed history for the server-side touch lock. Runs always (not just during a drive),
+        so 'just stopped a drive at 55 mph' can't read as parked (Guard review #1)."""
+        fix = self.gps.fix()
+        self._speed_hist.append((self.mono(), fix.get("speed") if (fix.get("mode") or 0) >= 2 else None))
+
+    def _ensure_reader(self) -> None:
+        if self.reader is None:
+            self.reader = self._reader_factory(self.gps)
+            self.reader.start()
+
+    def start_gps(self) -> None:
+        """Boot: gpsd reader + 1 Hz speed sampler run for the life of the server (receive-only)."""
+        self._ensure_reader()
+        self._persistent_reader = True
+
+        def sampler():
+            while True:
+                try:
+                    self._sample()
+                except Exception:
+                    pass
+                time.sleep(1)
+        threading.Thread(target=sampler, daemon=True, name="wardrive-gps-sampler").start()
+
     def boot(self) -> None:
         """Server start: abort sessions left running, silence the Marauder, purge old drives."""
         n = self.db.abort_running(self.wall())
@@ -189,8 +214,7 @@ class WardriveService:
             self.plain, self.kinds, self.present_at_start = {}, {}, set()
             self._stop.clear()
             try:
-                self.reader = self._reader_factory(self.gps)
-                self.reader.start()
+                self._ensure_reader()
             except Exception as exc:
                 self.db.end_session(sid, "failed", 0, self.wall())
                 self.sid, self.reader = None, None
@@ -258,8 +282,9 @@ class WardriveService:
                 return   # e.g. a late cap-stop must not end a newer session
             self._record_own_tpms()
             self._stop.set()
-            if self.reader:
+            if self.reader and not getattr(self, "_persistent_reader", False):
                 self.reader.stop()
+                self.reader = None
             kill = getattr(self.runner, "kill_all", None)
             if kill:
                 kill()                         # whole process groups: Sniffle, tshark, rtl_power, curl
@@ -275,7 +300,7 @@ class WardriveService:
             self._note(f"session {self.sid} {status}, "
                                        f"{(self.track.distance_m if self.track else 0) / 1000:.1f} km")
             alive = any(t.is_alive() for t in self._threads)
-            self.sid, self.reader, self.mode, self.alpr_near = None, None, None, None
+            self.sid, self.mode, self.alpr_near = None, None, None
             if not alive:
                 self._threads = []
                 self.orch.passive_only = False      # only after every collector is down
@@ -410,8 +435,9 @@ class WardriveService:
     # ---- collectors --------------------------------------------------------
     def tick_track(self) -> None:
         fix = self.gps.fix()
-        self._speed_hist.append((self.mono(), fix.get("speed") if (fix.get("mode") or 0) >= 2 else None))
-        if fix.get("lat") is None or (fix.get("mode") or 0) < 2:
+        if not getattr(self, "_persistent_reader", False):
+            self._sample()          # no boot sampler (tests / ad-hoc): sample here instead
+        if fix.get("lat") is None or (fix.get("mode") or 0) < 2 or self.sid is None or self.track is None:
             return
         self._recent_pts.append((fix["lat"], fix["lon"]))
         if self.mode == "drive" and self.alpr_warner is not None:
@@ -469,17 +495,19 @@ class WardriveService:
         from . import tpms
         freq = tpms.FREQS[self._sdr_i % len(tpms.FREQS)]
         self._sdr_i += 1
+        self._last_freq = freq
         return tpms.parse_window(self.runner(tpms.window_argv(freq, seconds), seconds + 15))
 
     def _store_tpms(self, recs) -> None:
         fix = self.gps.fix()
         ts = self._now(fix)
-        self._tpms_windows += 1
+        freq = getattr(self, "_last_freq", "315M")
+        self._tpms_windows[freq] += 1
         obs = []
         for r in recs:
             key_plain = f"{r['model']}:{r['id']}"
             o = self._obs("tpms", "tpms", key_plain, r.get("rssi"), fix.get("lat"), fix.get("lon"), ts)
-            self._tpms_heard[o["dev_key"]] += 1
+            self._tpms_heard[o["dev_key"]][freq] += 1
             obs.append(o)
         self._store_obs(obs)
 
@@ -502,11 +530,13 @@ class WardriveService:
         """Offer sensors heard in >=80 % of TPMS windows over >=5 km as 'your tires' (Guard #12)."""
         if self.mode != "drive" or not self.sid or not self.track or self.track.distance_m < 5000:
             return
-        if self._tpms_windows < 5:
-            return
-        for key, n in self._tpms_heard.items():
-            if n / self._tpms_windows >= 0.8:
-                self.db.add_candidate("tpms", key, self.sid)
+        for key, by_freq in self._tpms_heard.items():
+            # a sensor transmits on ONE band: judge it against windows on that band only
+            for freq, n in by_freq.items():
+                w = self._tpms_windows.get(freq, 0)
+                if w >= 3 and n / w >= 0.8:
+                    self.db.add_candidate("tpms", key, self.sid)
+                    break
 
     # ---- sentry (Guard #6, #7) ------------------------------------------------
     def _car_moved(self, why: str) -> None:
@@ -545,7 +575,10 @@ class WardriveService:
                              "MAX(last_ts) AS last FROM device_cells WHERE session_id=? AND radio='ble' "
                              "AND kind IN ('findmy_separated','google_dult','tile','smarttag','chipolo') "
                              "GROUP BY dev_key", (self.sid,))
+        mine = {k for (_, k) in self.db.mine_keys()} | {self.db.dev_key("ble", None, m) for m in self.mine_ids}
         for r in rows:
+            if r["dev_key"] in mine:
+                continue   # your own Tile/AirTag left in the car
             if (r["rssi"] or -999) > -75 and (r["last"] - r["first"]) >= 600:
                 self._alert("sentry_tracker", "high", r["dev_key"], self.plain.get(r["dev_key"]),
                             f"{TRACKER_NAMES.get(r['kind'], 'A tracker')} has been near the car for "

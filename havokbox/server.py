@@ -436,6 +436,9 @@ class Handlers:
         label = (body or {}).get("label") or ""
         if radio not in ("tpms", "ble", "wifi") or not key or not isinstance(label, str):
             return 400, {"status": "error", "reason": "radio, dev_key required"}
+        offered = {(o["radio"], o["dev_key"]) for o in self._wd().db.offers()}
+        if (radio, key) not in offered:
+            return 403, {"status": "error", "reason": "only offered devices can be marked from the tablet"}
         self._wd().db.add_mine(radio, key, label[:60])
         return 200, {"status": "ok"}
 
@@ -446,8 +449,8 @@ class Handlers:
         from .wardrive.service import WardriveError
         try:
             n = wd.refresh_alpr()
-        except (WardriveError, OSError, ValueError) as exc:
-            return 502, {"status": "error", "reason": str(exc)[:200]}
+        except Exception as exc:   # alpr.fetch raises RuntimeError on 3xx/429/oversize
+            return 502, {"status": "error", "reason": f"{type(exc).__name__}: {str(exc)[:160]}"}
         return 200, {"status": "ok", "cameras": n}
 
     def job(self, job_id: str) -> tuple[int, dict]:
@@ -521,6 +524,10 @@ def build(cfg: BoxConfig | None = None):
                                  quiet_zones=cfg.guard_quiet_zones)
     h.wardrive.boot()
     h.wardrive.load_alpr()
+    try:
+        h.wardrive.start_gps()      # always-on GPS speed for the touch lock (receive-only)
+    except Exception as exc:
+        store.log("error", f"gps reader: {exc}")
 
     def flush_forever():   # phone alerts go out whenever the car hotspot is up (queue in RAM)
         while True:

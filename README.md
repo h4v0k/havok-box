@@ -38,6 +38,11 @@ use `/dev/serial/by-id/...` paths for the Flipper, Marauder and Sniffle dongle).
 Wardrive (Drive tab): receive-only; needs gpsd (`-b`), Kismet with `gps=gpsd` and its log dir in
 `hw.kismet_log_dir`, and your own devices in `wardrive_mine` so they never alert. Drives and Kismet
 logs are deleted after 7 days. Design: `docs/design-wardrive.md`.
+Drive Guard (Phase 5): mount a tablet on the box's Wi-Fi, install `box-ca.crt` from provisioning as a
+trusted CA, open `https://<box>:8443/guard.html` and enter `guard_token` (it reaches only the guard
+screen). Turn on Android "Stay awake while charging". Phone alerts: set `HAVOKBOX_DISCORD_WEBHOOK`
+(env only); add `guard_quiet_zones` for home/work. Camera data: Report → refresh, or
+`POST /api/alpr/refresh` while online. Design: `docs/design-drive-guard.md`.
 Snapshot publishing (Phase 2): deploy the Worker in `cloudflare/` (see its README), set
 `publish_url` in `config/box.json` and `HAVOKBOX_PUBLISH_TOKEN` in the watchdog's environment. Publishing
 waits until the clock is NTP-synced (the Pi has no RTC battery). Then use Report → Publish.

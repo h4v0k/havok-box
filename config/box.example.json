@@ -22,5 +22,9 @@
   "publish_evidence_limit": 2000,
   "box_name": "havok-box",
   "wardrive_mine": [],
-  "wardrive_retention_days": 7
+  "wardrive_retention_days": 7,
+  "guard_quiet_zones": [],
+  "discord_map_links": false,
+  "sentry_limit_s": 50400,
+  "alpr_path": "/data/havokbox/alpr.json"
 }

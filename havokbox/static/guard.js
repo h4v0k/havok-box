@@ -26,11 +26,17 @@ function el(tag, attrs = {}, ...kids) {
 
 // ---- network --------------------------------------------------------------
 async function api(method, path, body) {
-  const r = await fetch(path, {
-    method, cache: "no-store",
-    headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  // A box that loses power mid-request must not hang the poll: abort after 4 s (lost-link in ~6 s).
+  const ctl = new AbortController();
+  const timeout = setTimeout(() => ctl.abort(), 4000);
+  let r;
+  try {
+    r = await fetch(path, {
+      method, cache: "no-store", signal: ctl.signal,
+      headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } finally { clearTimeout(timeout); }
   if (r.status === 401) { clearToken("Token rejected."); throw new Error("unauthorized"); }
   const data = await r.json().catch(() => ({}));
   if (r.status === 409) { const e = new Error(data.reason || "park first"); e.refused = true; throw e; }
@@ -148,7 +154,7 @@ async function poll() {
     fails++;
     if (fails >= FAIL_LIMIT) {
       linkLost = true;
-      if (!lostSpoken) { lostSpoken = true; speak("Lost link to box", true); }
+      if (!lostSpoken) lostSpoken = speak("Lost link to box") !== false;
     }
   }
   polling = false;

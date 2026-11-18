@@ -207,6 +207,59 @@ class GuardTest(ServiceTest):
         self.assertEqual(st["alpr_near"]["id"], "123")
         self.assertEqual(self.db.query("SELECT * FROM alerts WHERE kind='alpr'"), [])
 
+    # ---- review fixes ---------------------------------------------------------------
+    def test_touch_lock_holds_after_drive_ends(self):
+        self.wd.start()
+        self.drive(25.0)
+        self.wd.stop()
+        self.mono[0] += 61
+        self.wd._sample()                 # GPS keeps sampling between drives (boot sampler)
+        self.wd.gps.update({"class": "TPV", "ts": self.wall[0], "lat": 27.95, "lon": -82.46, "mode": 3, "speed": 25})
+        self.wd._sample()
+        self.assertFalse(self.wd.can_touch())
+        self.assertEqual(self.h.guard_sentry({"arm": True})[0], 409)
+
+    def test_tablet_can_only_mark_offered_keys(self):
+        self.drive(0.0)
+        self.assertEqual(self.h.guard_mine({"radio": "tpms", "dev_key": "h:notoffered"})[0], 403)
+
+    def test_us_315_sensor_offered_despite_alternating_bands(self):
+        for _ in range(2):
+            self.wd.start()
+            self.wd.gps.update({"class": "TPV", "ts": self.wall[0], "lat": 27.95, "lon": -82.46, "mode": 3})
+            for i in range(10):
+                self.run.tpms = tpms_lines(sid="0x315315") if i % 2 == 0 else ""   # heard on 315 only
+                self.wd._last_floor = self.mono[0]
+                self.wd.tick_sdr()
+            self.wd.track.distance_m = 6000
+            self.wd.stop()
+        self.assertEqual(len(self.db.offers()), 1)
+
+    def test_own_tracker_left_in_car_never_alerts(self):
+        self.wd.start(mode="sentry")
+        key = self.db.dev_key("ble", None, TAG)
+        self.db.add_mine("ble", key, "my AirTag")
+        self.run.ble = [{"addr": TAG, "rssi": -50, "company_ids": [76], "uuid16": [],
+                         "mfg_data": [APPLE_SEPARATED], "random": True}]
+        for step in (0, 330, 330):
+            self.wall[0] += step
+            self.wd.gps.update({"class": "TPV", "ts": self.wall[0], "lat": 27.95, "lon": -82.46, "mode": 3})
+            self.wd.tick_ble(); self.wd.tick_sentry()
+        self.assertEqual(self.db.query("SELECT * FROM alerts WHERE kind='sentry_tracker'"), [])
+
+    def test_watchdog_fresh_limit_after_disarm(self):
+        from havokbox.watchdog import Watchdog
+        clock = [0.0]
+        cfg = BoxConfig(db_path=self.path, session_limit_s=100, sentry_limit_s=5000)
+        w = Watchdog(cfg, spawn=lambda c: None, clock=lambda: clock[0])
+        w.started = 0.0
+        self.wd.start(mode="sentry")
+        clock[0] = 3000.0
+        self.assertEqual(w._limit(), 5000)
+        self.wd.stop()                                       # disarm in the morning
+        self.assertEqual(w._limit(), 100)
+        self.assertEqual(w.started, 3000.0)                  # the drive gets its own 100 s
+
     # ---- misc -----------------------------------------------------------------
     def test_phrases_are_short(self):
         for k in list(PHRASES) + ["DEAUTHFLOOD"]:

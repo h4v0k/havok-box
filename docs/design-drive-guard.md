@@ -79,3 +79,7 @@ radio. It builds on the wardrive service (sessions, GPS, collectors, alerts tabl
 12. A `wardrive_mine(radio, dev_key, label, added)` table, written only by the dashboard, merged with config. An id is offered as "your tires" only after the 80 % rule holds in ≥ 2 sessions.
 13. ALPR: Overpass `node["surveillance:type"="ALPR"](bbox)`. Keep only id, lat/lon inside the bbox and direction 0–360; cap 20k; atomic write keeping the last good copy; ODbL attribution; never published. Heading from TPV `track` above 4 m/s, else the bearing over the last 50 m. Warn within 300 m, inside ±45°, distance closing, and facing you if the camera's direction is tagged. Index by grid cell.
 14. ALPR passes are kept in RAM only (no alerts rows). The over-the-air "confirmed" link is cut from v1. `/api/guard/state` returns RAM state plus alerts with id > since, never track or devices.
+
+### Review reconciliation
+- Resolutions #6/#7/#9 conflict on what runs in sentry. Decision: sentry runs BLE + GPS + a 30 s TPMS check every 5 min (needed for "your tires woke up"). Kismet stays off to save the battery, so there is no deauth detection while parked.
+- The GPS reader and a 1 Hz speed sampler run whenever the server is up (receive-only), so the touch lock holds between drives. With no GPS fix at all for > 60 s, touch is allowed (garage); the client lock still applies.

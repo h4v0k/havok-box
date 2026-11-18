@@ -90,8 +90,15 @@ class Watchdog:
             sentry = self._with_store(q)
         except Exception:
             sentry = False
-        return getattr(self.cfg, "sentry_limit_s", self.cfg.session_limit_s) if sentry \
-            else self.cfg.session_limit_s
+        if sentry:
+            self._sentry_seen = True
+            return getattr(self.cfg, "sentry_limit_s", self.cfg.session_limit_s)
+        if getattr(self, "_sentry_seen", False):
+            # Sentry just ended (disarmed to drive): the drive gets a fresh session limit
+            # instead of inheriting the overnight uptime (Guard review #2).
+            self._sentry_seen = False
+            self.started = self.clock()
+        return self.cfg.session_limit_s
 
     def boot(self) -> None:
         self._void("boot")

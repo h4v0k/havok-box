@@ -129,8 +129,19 @@ class IndexGeoTests(unittest.TestCase):
 
 
 class WarnerTests(unittest.TestCase):
-    def w(self, cams, **kw):
-        return alpr.Warner(alpr.Index(cams), **kw)
+    """A warning needs two fixes with the distance shrinking (resolution #13), so each 'warns'
+    case first primes the warner with a fix 10 m further back."""
+    def w(self, cams, prime=True, **kw):
+        w = alpr.Warner(alpr.Index(cams), **kw)
+        if prime:
+            w.update(-1, LAT - 10 * M, LON, 15, 0, [])
+            w.passes = 0
+        return w
+
+    def test_first_sight_does_not_warn(self):
+        w = self.w([cam("a", LAT + 200 * M, LON)], prime=False)
+        self.assertIsNone(w.update(0, LAT, LON, 15, 0, []))
+        self.assertIsNotNone(w.update(1, LAT + 10 * M, LON, 15, 0, []))
 
     def test_ahead_warns_behind_not(self):
         ahead = self.w([cam("a", LAT + 200 * M, LON)])
@@ -149,7 +160,7 @@ class WarnerTests(unittest.TestCase):
     def test_opening_no_warn(self):
         w = self.w([cam("a", LAT + 200 * M, LON)])
         self.assertIsNotNone(w.update(0, LAT, LON, 15, 0, []))
-        w2 = self.w([cam("a", LAT + 200 * M, LON)], repeat_s=0)
+        w2 = self.w([cam("a", LAT + 200 * M, LON)], prime=False, repeat_s=0)
         w2.update(0, LAT, LON, 15, 0, [])
         # moving laterally-away while still "ahead" cone: distance grows
         self.assertIsNone(w2.update(1, LAT - 20 * M, LON, 15, 0, []))
@@ -162,8 +173,9 @@ class WarnerTests(unittest.TestCase):
         self.assertEqual(w.passes, 2)
 
     def test_low_speed_uses_bearing(self):
-        w = self.w([cam("a", LAT + 200 * M, LON)])
+        w = self.w([cam("a", LAT + 200 * M, LON)], prime=False)
         pts = [(LAT - 80 * M, LON), (LAT - 30 * M, LON)]
+        w.update(-1, LAT - 10 * M, LON, 2, 180, pts)
         self.assertIsNotNone(w.update(0, LAT, LON, 2, 180, pts))  # track ignored at low speed
         w2 = self.w([cam("a", LAT + 200 * M, LON)])
         self.assertIsNone(w2.update(0, LAT, LON, 2, 0, [(LAT - 10 * M, LON)]))  # not enough movement

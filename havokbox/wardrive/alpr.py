@@ -210,8 +210,8 @@ class Warner:
             cid = cam["id"]
             if angle_diff(heading, bearing_deg(lat, lon, cam["lat"], cam["lon"])) > self.cone_deg:
                 continue
-            if cid in prev and d >= prev[cid]:
-                continue
+            if cid not in prev or d >= prev[cid]:
+                continue   # need two fixes and a shrinking distance (resolution #13)
             if cam.get("dir") is not None and angle_diff(
                     cam["dir"], bearing_deg(cam["lat"], cam["lon"], lat, lon)) > self.FACING_DEG:
                 continue

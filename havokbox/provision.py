@@ -48,9 +48,13 @@ def ensure_cert(cfg: BoxConfig, run=subprocess.run) -> str:
              "-nodes", "-days", "3650", "-subj", "/CN=havok-box local CA",
              "-addext", "basicConstraints=critical,CA:TRUE,pathlen:0",
              "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+             # A stolen box can't mint certs for other sites your tablet trusts (review #5)
+             "-addext", f"nameConstraints=critical,permitted;IP:{cfg.box_address}/255.255.255.255",
              "-keyout", ca_key, "-out", ca_crt], check=True, capture_output=True)
         os.chmod(ca_key, 0o600)
-    if not cfg.tls_ready():
+    signed_by_ca = cfg.tls_ready() and run(
+        ["openssl", "verify", "-CAfile", ca_crt, cfg.tls_cert], capture_output=True).returncode == 0
+    if not signed_by_ca:   # new box, or an upgraded box with the old self-signed leaf (review #6)
         csr = cfg.tls_cert + ".csr"
         ext = cfg.tls_cert + ".ext"
         run(["openssl", "req", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
