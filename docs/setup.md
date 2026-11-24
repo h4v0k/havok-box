@@ -12,7 +12,24 @@ sudo ./scripts/kali-setup.sh --unattended --admin-pass 'secret'   # hands-free i
 ```
 
 Options: `--box-ip --lan-cidr --iface --no-recon --no-desktop --enable-console
---unattended --app-dir`.
+--unattended --app-dir --tailscale --wifi 'SSID:PASS' --ap-ssid <name>`.
+
+## Wi-Fi: known networks first, the box's own network as fallback
+The Pi's **built-in** Wi-Fi (`--iface`, default `wlan0`) is the only radio NetworkManager manages;
+the Alfa and other radios are left to the recon tools.
+
+- **Known networks** (home Wi-Fi, car hotspot): pass `--wifi 'Name:password'` (repeat it; the first
+  one is preferred), or enter them when prompted. The box joins whichever is in range, which gives
+  it internet (Claude API, Tailscale).
+- **Fallback:** if none connects within about a minute, the box turns on its own WPA2 network,
+  **`free-candy-van`** by default (`--ap-ssid` to change it). The password is the admin password,
+  which must be at least 8 characters, and the box is at `192.168.4.1`.
+- **Switching back:** while its own network is up and nobody is connected to it, the box retries
+  the known networks every 3 minutes. It never drops someone who's connected.
+- **By hand:** `havokbox-net status`, `sudo havokbox-net ap` (force the box network),
+  `sudo havokbox-net client` (try the known networks now).
+
+The watcher starts on the next boot, so running setup over SSH won't cut your connection.
 
 ## Security posture is preserved
 - Console (raw shell) and Desktop (noVNC) are scope-gate **bypasses**, so they

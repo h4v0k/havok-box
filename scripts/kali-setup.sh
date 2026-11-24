@@ -20,6 +20,9 @@
 #   --no-recon           skip the RF/recon tool packs (core + dashboard only)
 #   --no-desktop         don't install/enable the noVNC desktop
 #   --enable-console     install ttyd and enable the web shell (uses the admin password)
+#   --tailscale          install Tailscale; then run 'sudo tailscale up' once to sign in
+#   --wifi 'SSID:PASS'   a known network to join (repeat; first = preferred). Prompted if none given
+#   --ap-ssid <name>     the box's own fallback network name  (default free-candy-van)
 #   --unattended         never prompt; needs --admin-pass (or env) or one is generated
 #   --app-dir <path>     where the repo lives                  (default: this repo)
 #   -h, --help           show this and exit
@@ -36,6 +39,9 @@ IFACE="wlan0"
 WANT_RECON=1
 WANT_DESKTOP=1
 WANT_CONSOLE=0
+WANT_TAILSCALE=0
+WIFI_LIST=()
+AP_SSID="free-candy-van"
 UNATTENDED=0
 ADMIN_PW="${HAVOKBOX_ADMIN_PASSWORD:-}"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -62,6 +68,9 @@ while [ $# -gt 0 ]; do
     --no-recon)      WANT_RECON=0; shift;;
     --no-desktop)    WANT_DESKTOP=0; shift;;
     --enable-console) WANT_CONSOLE=1; shift;;
+    --tailscale)     WANT_TAILSCALE=1; shift;;
+    --wifi)          WIFI_LIST+=("$2"); shift 2;;
+    --ap-ssid)       AP_SSID="$2"; shift 2;;
     --unattended)    UNATTENDED=1; shift;;
     --app-dir)       APP_DIR="$2"; CONFIG="$APP_DIR/config/box.json"; shift 2;;
     -h|--help)       sed -n '2,40p' "$0"; exit 0;;
@@ -81,7 +90,7 @@ ok "repo: $APP_DIR   python: $PYVER   box: $BOX_IP ($IFACE, $LAN_CIDR)   user: $
 # ---- the one password -------------------------------------------------------
 # Used for the VNC desktop, the Kismet admin login, and (if enabled) the console.
 # Everything downstream is automated from it.
-NEED_PW=0
+NEED_PW=1   # always: it is also the WPA2 key of the box's own Wi-Fi
 { [ "$WANT_DESKTOP" -eq 1 ] || [ "$WANT_CONSOLE" -eq 1 ]; } && NEED_PW=1
 { [ "$WANT_RECON" -eq 1 ] && NEED_PW=1; } || true     # Kismet admin login
 if [ "$NEED_PW" -eq 1 ] && [ -z "$ADMIN_PW" ]; then
@@ -95,6 +104,7 @@ if [ "$NEED_PW" -eq 1 ] && [ -z "$ADMIN_PW" ]; then
     read -rsp "    Confirm : " _pw2; echo
     [ -n "$ADMIN_PW" ] || die "empty password."
     [ "$ADMIN_PW" = "$_pw2" ] || die "passwords didn't match."
+    [ "${#ADMIN_PW}" -ge 8 ] || die "use at least 8 characters (it is also the box Wi-Fi's WPA2 key)."
     unset _pw2
   fi
   # VNC only honors the first 8 characters of the password it checks.
@@ -107,7 +117,7 @@ say "Installing packages (missing tools just hide their buttons; failures are no
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq || warn "apt update had warnings; continuing"
 
-CORE_PKGS="python3 python3-venv python3-pip openssl nftables ca-certificates curl"
+CORE_PKGS="python3 python3-venv python3-pip openssl nftables ca-certificates curl network-manager dnsmasq-base iw"
 RECON_PKGS="kismet gpsd gpsd-clients rtl-sdr rtl-433 aircrack-ng hcxtools hcxdumptool tshark tcpdump nmap iw bluez testssl.sh seclists responder"
 DESKTOP_PKGS="kali-desktop-xfce tigervnc-standalone-server novnc websockify"
 CONSOLE_PKGS="ttyd"
@@ -365,6 +375,128 @@ grep -q 'include "/etc/nftables.d/\*\.nft"' /etc/nftables.conf 2>/dev/null \
   || echo 'include "/etc/nftables.d/*.nft"' >> /etc/nftables.conf
 systemctl enable --now nftables >/dev/null 2>&1 && nft -f /etc/nftables.conf 2>/dev/null \
   && ok "rules loaded" || warn "nftables reload failed; check /etc/nftables.conf"
+
+# ---- Wi-Fi: join known networks, else the box's own network ----------------
+say "Wi-Fi ($IFACE): known networks first, '$AP_SSID' as fallback"
+[ "${#ADMIN_PW}" -ge 8 ] || die "the admin password must be at least 8 characters (WPA2 key for '$AP_SSID')."
+if [ "${#WIFI_LIST[@]}" -eq 0 ] && [ "$UNATTENDED" -eq 0 ]; then
+  echo "    Add the networks the box should join (home Wi-Fi, car hotspot). Blank name = done."
+  while true; do
+    read -rp "    Network name: " _ss; [ -n "$_ss" ] || break
+    read -rsp "    Password    : " _pp; echo
+    WIFI_LIST+=("$_ss:$_pp")
+  done
+  unset _ss _pp
+fi
+# Only the built-in radio is NetworkManager's; the Alfa and other radios belong to the recon tools.
+install -d /etc/NetworkManager/conf.d
+cat > /etc/NetworkManager/conf.d/havokbox-radios.conf <<NMCONF
+[keyfile]
+unmanaged-devices=type:wifi;except:interface-name:$IFACE
+NMCONF
+systemctl enable --now NetworkManager >/dev/null 2>&1 || warn "NetworkManager not running"
+nmcli general reload >/dev/null 2>&1 || true
+prio=50
+for entry in "${WIFI_LIST[@]}"; do
+  ss="${entry%%:*}"; pp="${entry#*:}"
+  con="havokbox-wifi-$(printf '%s' "$ss" | tr -c 'A-Za-z0-9._-' '_')"
+  nmcli con delete "$con" >/dev/null 2>&1 || true
+  if [ -n "$pp" ] && [ "$pp" != "$ss" ]; then
+    nmcli con add type wifi ifname "$IFACE" con-name "$con" ssid "$ss" \
+      wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$pp" \
+      connection.autoconnect yes connection.autoconnect-priority "$prio" >/dev/null \
+      && ok "known network: $ss" || warn "could not add $ss"
+  else
+    nmcli con add type wifi ifname "$IFACE" con-name "$con" ssid "$ss" \
+      connection.autoconnect yes connection.autoconnect-priority "$prio" >/dev/null \
+      && ok "known network (open): $ss" || warn "could not add $ss"
+  fi
+  prio=$((prio - 10))
+done
+nmcli con delete havokbox-ap >/dev/null 2>&1 || true
+nmcli con add type wifi ifname "$IFACE" con-name havokbox-ap autoconnect no ssid "$AP_SSID" \
+  802-11-wireless.mode ap 802-11-wireless.band bg \
+  ipv4.method shared ipv4.addresses "$BOX_IP/${LAN_CIDR#*/}" ipv6.method disabled \
+  wifi-sec.key-mgmt wpa-psk wifi-sec.proto rsn wifi-sec.pairwise ccmp wifi-sec.group ccmp \
+  wifi-sec.psk "$ADMIN_PW" >/dev/null && ok "box network: '$AP_SSID' (WPA2, admin password) at $BOX_IP" \
+  || warn "could not create the box network profile"
+install -m 0755 "$APP_DIR/scripts/havokbox-net.sh" /usr/local/sbin/havokbox-net
+cat > /etc/systemd/system/havokbox-net.service <<UNIT
+[Unit]
+Description=havok-box Wi-Fi: known networks first, own network as fallback
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Environment=HAVOKBOX_NET_IFACE=$IFACE
+ExecStartPre=-/usr/sbin/iw reg set US
+ExecStart=/usr/local/sbin/havokbox-net
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable havokbox-net >/dev/null 2>&1 && ok "fallback watcher enabled (starts on next boot; 'havokbox-net status')" \
+  || warn "could not enable havokbox-net"
+
+# ---- SSH (laptop access; see docs/hb.md for key-only login) -----------------
+say "SSH server"
+if command -v sshd >/dev/null 2>&1 || apt-get install -y -qq openssh-server >/dev/null 2>&1; then
+  systemctl enable --now ssh >/dev/null 2>&1 && ok "ssh enabled (port 22)" || warn "could not start ssh"
+else
+  warn "openssh-server not installed"
+fi
+
+# ---- Tailscale (optional: reach the box from anywhere without opening ports) --
+if [ "$WANT_TAILSCALE" -eq 1 ]; then
+  say "Tailscale"
+  if command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1; then
+    systemctl enable --now tailscaled >/dev/null 2>&1 || true
+    if tailscale status >/dev/null 2>&1; then ok "tailscale already signed in: $(tailscale ip -4 2>/dev/null | head -1)"
+    else ok "tailscale installed: run 'sudo tailscale up' and open the link it prints to sign in"; fi
+  else
+    warn "tailscale install failed (is the box online?)"
+  fi
+fi
+
+# ---- hb: command-line scan helpers (Console / SSH / Desktop) -----------------
+say "Installing the 'hb' scan helper"
+install -d -m 0750 -o "$RUN_USER" -g "$RUN_USER" "$DATA_DIR/scans"
+cat > /usr/local/bin/hb <<EOF
+#!/usr/bin/env bash
+# havok-box 'hb' launcher (generated by kali-setup.sh). Scope-checked nmap profiles + parsers.
+export PYTHONPATH="$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
+export HB_SCANS_DIR="\${HB_SCANS_DIR:-$DATA_DIR/scans}"
+exec "$VENV/bin/python" -m havokbox.hbcli --scope "\${HB_SCOPE:-$APP_DIR/config/scope.yaml}" "\$@"
+EOF
+chmod 0755 /usr/local/bin/hb
+# Let nmap send raw packets without sudo (nmap --privileged). Scripts (NSE) still run as you, not root.
+apt-get install -y -qq zenity libcap2-bin >/dev/null 2>&1 || warn "zenity/libcap2-bin not installed"
+if command -v nmap >/dev/null && command -v setcap >/dev/null; then
+  setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip "$(readlink -f "$(command -v nmap)")" \
+    && ok "nmap can scan without sudo" || warn "setcap on nmap failed; hb will use sudo"
+fi
+# Clickable launchers on the Kali desktop + app menu
+for f in havok-box havok-box-terminal; do
+  if [ "$f" = havok-box ]; then name="havok-box scans"; exec_line="hb gui"; term=false
+  else name="havok-box scans (terminal)"; exec_line="hb"; term=true; fi
+  cat > "/usr/share/applications/$f.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=$name
+Comment=Scope-checked nmap scans, device lists and reports
+Exec=$exec_line
+Icon=kali-nmap
+Terminal=$term
+Categories=Network;
+DESKTOP
+done
+DESK="$(getent passwd "$RUN_USER" | cut -d: -f6)/Desktop"
+install -d -o "$RUN_USER" -g "$RUN_USER" "$DESK"
+install -m 0755 -o "$RUN_USER" -g "$RUN_USER" /usr/share/applications/havok-box.desktop "$DESK/"
+ok "hb installed: run 'hb' for menus, 'hb gui' or the desktop icon for windows (scans in $DATA_DIR/scans)"
 
 # ---- systemd units: dashboard + watchdog ------------------------------------
 say "systemd units (dashboard + watchdog)"
