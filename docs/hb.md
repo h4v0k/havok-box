@@ -18,7 +18,22 @@ as in the Console.
   windows and a progress bar you can cancel.
 
 Both cover: scan, quick workflow with a report, devices from a scan, open ports, find hosts by port
-or service, compare two scans, and browse past scans.
+or service, compare two scans, browse past scans, and **check my hardware**.
+
+## Hardware check
+
+`hb hw` (also in the menus, and on the dashboard's Report tab) goes board by board and says
+**Working**, **Needs attention** or **Not plugged in**, with the fix for each:
+
+- **Alfa:** detected, and its interface came up.
+- **RTL-SDR V4:** answers. The check reads its EEPROM, and flags it if another program has it open.
+- **ZigBee dongle:** Sniffle installed, and the firmware flashed (`sudo scripts/flash-sniffle.sh`, once).
+- **Yard Stick One:** detected, and rfcat installed.
+- **GPS:** gpsd reading it, and whether it has a 2D/3D fix.
+- **Software:** which dashboard buttons are hidden because their tool isn't installed.
+- **Spares:** the Flipper (backup sub-GHz) and the CC1101 are listed when present.
+
+The check is read-only. It never transmits and never changes a radio's mode.
 
 Setup gives nmap raw-packet rights (`setcap`), so scans run without sudo. nmap scripts still run as
 your user, not root. On a shared machine, note that this lets any local user send raw packets.

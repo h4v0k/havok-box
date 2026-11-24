@@ -67,13 +67,6 @@ class AdsbHelperTest(unittest.TestCase):
                 adsb.run("a b;", 1, w, runner=lambda a: None, sleep=lambda s: None)
 
 
-AIS_OUT = "\n".join([
-    "AIS-catcher v0.5",
-    json.dumps({"mmsi": 366123456, "lat": 27.7, "lon": -82.6, "speed": 5.5, "course": 120.0}),
-    json.dumps({"mmsi": 366123456, "shipname": "SEA GULL@@", "shiptype": 70}),
-    json.dumps({"mmsi": 111, "lat": 91, "lon": 181, "speed": 102.3, "course": 360}),
-    "{bad", "[]", json.dumps({"no": "mmsi"}),
-])
 
 
 class AirToolTest(unittest.TestCase):
@@ -102,32 +95,6 @@ class AirToolTest(unittest.TestCase):
         ctx = ToolCtx(runner=lambda a: "oops", mode="standard", scope=SCOPE)
         res = air.adsb({"target": {}}, ctx)
         self.assertEqual(res["data"], {"aircraft": [], "emergencies": []})
-
-    def test_build_ais(self):
-        hw = {**DEFAULT_HW, "sdr2_serial": "AIR2", "ais_device_index": 1}
-        a = air.build_ais({"seconds": 120}, "standard", SCOPE, hw)[0]
-        self.assertEqual(a[:3], ["timeout", "120", "AIS-catcher"])
-        self.assertIn("-d:1", a)          # AIS-catcher selects by index, not serial
-        self.assertNotIn("-d:AIR2", a)
-        self.assertNotIn("-d:", " ".join(air.build_ais({}, "s", SCOPE, DEFAULT_HW)[0]))
-
-    def test_ais_fn(self):
-        rec = []
-        ctx = ToolCtx(runner=lambda a: (rec.append(a), AIS_OUT)[1], mode="standard", scope=SCOPE)
-        res = air.ais({"target": {}}, ctx)
-        self.assertEqual(rec, air.build_ais({}, "standard", SCOPE, ctx.hw))
-        self.assertEqual((res["space"], res["kind"]), ("sdr2", "vessels"))
-        v = res["data"]["vessels"]
-        self.assertEqual(len(v), 2)
-        self.assertEqual((v[0]["mmsi"], v[0]["name"], v[0]["shiptype"], v[0]["lat"], v[0]["speed"]),
-                         ("366123456", "SEA GULL", 70, 27.7, 5.5))
-        self.assertIsNone(v[1]["lat"])
-        self.assertIsNone(v[1]["speed"])
-
-    def test_ais_cap(self):
-        txt = "\n".join(json.dumps({"mmsi": i}) for i in range(200))
-        self.assertEqual(len(air.parse_ais(txt)), 64)
-        self.assertEqual(air.parse_ais(""), [])
 
 
 if __name__ == "__main__":

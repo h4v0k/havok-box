@@ -33,7 +33,6 @@
   "hw": {
     "sdr_serial": "",
     "sdr2_serial": "",
-    "ais_device_index": null,
     "default_creds": "/opt/havokbox/default-creds.txt",
     "wordlist": "/usr/share/seclists/Discovery/Web-Content/common.txt"
   },

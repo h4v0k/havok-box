@@ -119,7 +119,14 @@ apt-get update -qq || warn "apt update had warnings; continuing"
 
 CORE_PKGS="python3 python3-venv python3-pip openssl nftables ca-certificates curl network-manager dnsmasq-base iw"
 RECON_PKGS="kismet gpsd gpsd-clients rtl-sdr rtl-433 aircrack-ng hcxtools hcxdumptool tshark tcpdump nmap iw bluez testssl.sh seclists responder"
+# Tools the dashboard buttons already call (hidden until installed), + the Yard Stick and quiet discovery
+RECON_PKGS="$RECON_PKGS rfcat direwolf multimon-ng python3-serial python3-intelhex nuclei netexec feroxbuster p0f onesixtyone snmp ldap-utils thc-ipv6 mitm6 hydra whatweb smbclient exploitdb arp-scan netdiscover bettercap usbutils"
+# Build deps for readsb (ADS-B), which isn't packaged
+BUILD_PKGS="git build-essential cmake pkg-config librtlsdr-dev libusb-1.0-0-dev zlib1g-dev libzstd-dev libncurses-dev"
 DESKTOP_PKGS="kali-desktop-xfce tigervnc-standalone-server novnc websockify"
+# Point-and-click tools for the desktop: packet view, nmap GUI, spectrum viewer/listening (gqrx),
+# sub-GHz analysis (URH), and CHIRP for programming Baofeng/ham/GMRS handhelds over USB
+GUI_PKGS="wireshark zenmap-kbx gqrx-sdr urh chirp"
 CONSOLE_PKGS="ttyd"
 
 install_group() {   # name "pkg list"
@@ -132,7 +139,9 @@ install_group() {   # name "pkg list"
 }
 install_group "core"    "$CORE_PKGS"
 [ "$WANT_RECON"   -eq 1 ] && install_group "recon"   "$RECON_PKGS"
+[ "$WANT_RECON"   -eq 1 ] && install_group "build"   "$BUILD_PKGS"
 [ "$WANT_DESKTOP" -eq 1 ] && install_group "desktop" "$DESKTOP_PKGS"
+[ "$WANT_DESKTOP" -eq 1 ] && install_group "gui"     "$GUI_PKGS"
 [ "$WANT_CONSOLE" -eq 1 ] && install_group "console" "$CONSOLE_PKGS"
 
 # ---- directories ------------------------------------------------------------
@@ -143,7 +152,9 @@ ok "$DATA_DIR  $OPT_DIR  $ETC_DIR"
 
 # ---- python runtime ---------------------------------------------------------
 say "Python runtime (venv at $VENV)"
-[ -d "$VENV" ] || python3 -m venv "$VENV"
+[ -d "$VENV" ] || python3 -m venv --system-site-packages "$VENV"
+# apt-installed radio libraries (rflib from rfcat) must be importable by the box's helpers
+sed -i 's/^include-system-site-packages = false/include-system-site-packages = true/' "$VENV/pyvenv.cfg"
 "$VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || warn "pip self-upgrade skipped"
 if "$VENV/bin/pip" install -q starlette uvicorn pyyaml pyserial >/dev/null 2>&1; then
   ok "installed starlette uvicorn pyyaml pyserial"
@@ -375,6 +386,33 @@ grep -q 'include "/etc/nftables.d/\*\.nft"' /etc/nftables.conf 2>/dev/null \
   || echo 'include "/etc/nftables.d/*.nft"' >> /etc/nftables.conf
 systemctl enable --now nftables >/dev/null 2>&1 && nft -f /etc/nftables.conf 2>/dev/null \
   && ok "rules loaded" || warn "nftables reload failed; check /etc/nftables.conf"
+
+# ---- radio software that isn't packaged (Sniffle, readsb) --------------------
+if [ "$WANT_RECON" -eq 1 ]; then
+  say "Radio software from source (Sniffle, readsb)"
+  SRC="$OPT_DIR/src"; install -d "$SRC"
+  if [ -d /opt/sniffle/.git ]; then git -C /opt/sniffle pull -q --ff-only >/dev/null 2>&1 || true
+  else git clone -q --depth 1 https://github.com/nccgroup/Sniffle /opt/sniffle >/dev/null 2>&1 || true; fi
+  [ -f /opt/sniffle/python_cli/sniff_receiver.py ] && ok "Sniffle at /opt/sniffle (flash the dongle once: sudo $APP_DIR/scripts/flash-sniffle.sh)" \
+    || warn "Sniffle clone failed (is the box online?)"
+  if ! command -v readsb >/dev/null; then
+    rm -rf "$SRC/readsb"
+    if git clone -q --depth 1 https://github.com/wiedehopf/readsb "$SRC/readsb" >/dev/null 2>&1 \
+       && make -C "$SRC/readsb" -j4 RTLSDR=yes >/dev/null 2>&1; then
+      install -m 0755 "$SRC/readsb/readsb" /usr/local/bin/readsb && ok "readsb built (ADS-B)"
+    else warn "readsb build failed: ADS-B button stays hidden"; fi
+  else ok "readsb present"; fi
+  # Radios are used by the box user without sudo: dialout (serial dongles), plugdev (USB SDR/Yard Stick)
+  usermod -aG dialout,plugdev "$RUN_USER" 2>/dev/null || true
+  cat > /etc/udev/rules.d/60-havokbox-radios.rules <<'UDEV'
+# Yard Stick One (rfcat) and RTL-SDR: usable without root
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="605b", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", MODE="0660", GROUP="plugdev"
+UDEV
+  udevadm control --reload-rules >/dev/null 2>&1 || true
+  # The DVB-T TV driver grabs RTL-SDR dongles before rtl-sdr can; keep it off
+  echo "blacklist dvb_usb_rtl28xxu" > /etc/modprobe.d/havokbox-rtlsdr.conf
+fi
 
 # ---- Wi-Fi: join known networks, else the box's own network ----------------
 say "Wi-Fi ($IFACE): known networks first, '$AP_SSID' as fallback"

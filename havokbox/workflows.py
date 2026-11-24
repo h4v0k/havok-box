@@ -91,21 +91,34 @@ SPACES = [
     {
         "id": "subghz",
         "label": "Sub-GHz",
-        "radio": "Flipper Zero (Momentum)",
+        "radio": "Yard Stick One (rfcat); Flipper Zero as backup",
         "discover": [
-            {"id": "subghz.listen", "label": "Listen for signals", "tool": "flipper subghz rx",
+            {"id": "subghz.listen", "label": "Listen for signals", "tool": "rfcat (lowball RX)",
              "category": "recon.passive", "needs": None,
              "what": "Catch remotes, fobs and sensors on 315/433/915 MHz."},
         ],
         "identify": [
-            {"id": "subghz.record", "label": "Record signal", "tool": "flipper subghz rx_raw",
+            {"id": "subghz.record", "label": "Record signal", "tool": "rfcat (saves each signal)",
              "category": "recon.passive", "needs": "signal", "what": "Save one signal and name its protocol."},
         ],
         "test": [
-            {"id": "subghz.replay", "label": "Replay test", "tool": "flipper subghz tx_from_file",
+            {"id": "subghz.replay", "label": "Replay test", "tool": "rfcat RFxmit",
              "category": "rf.replay", "needs": "signal",
              "what": "Check that the receiver rejects a replayed signal."},
         ],
+    },
+    {
+        "id": "radio",
+        "label": "Ham & two-way radio",
+        "radio": "RTL-SDR Blog V4 (receive only)",
+        "discover": [
+            {"id": "radio.bands", "label": "Who's talking", "tool": "rtl_power", "category": "recon.passive",
+             "needs": None, "what": "Which FRS/GMRS, MURS, NOAA, 2m and 70cm channels are active."},
+            {"id": "radio.aprs", "label": "APRS stations", "tool": "rtl_fm + direwolf",
+             "category": "recon.passive", "needs": None, "what": "Ham stations on 144.390 MHz, with positions."},
+        ],
+        "identify": [],
+        "test": [],
     },
     {
         "id": "spectrum",

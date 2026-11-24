@@ -3,7 +3,7 @@ runs under, and what typed params each takes. The orchestrator runs only what's 
 """
 from __future__ import annotations
 
-from . import ToolSpec, air, ble, flipper, kali_recon, kali_test, kismet, marauder, nmap, sdr, wifi, wired
+from . import ToolSpec, air, ble, flipper, kali_recon, kali_test, kismet, marauder, nmap, radio, sdr, wifi, wired, yardstick
 
 
 def default_registry() -> dict[str, ToolSpec]:
@@ -89,12 +89,22 @@ def default_registry() -> dict[str, ToolSpec]:
                  params={"freq": {"type": "choice", "choices": ["315M", "433.92M", "915M"]},
                          "seconds": {"type": "int", "min": 10, "max": 600}},
                  fn=sdr.decode, build=lambda t, mode, scope, hw: sdr.build_decode(t, mode, scope, hw)),
-        # ---- Flipper sub-GHz --------------------------------------------
+        # ---- Sub-GHz: Yard Stick One (rfcat) is primary; Flipper kept as a backup ---------
         ToolSpec(name="subghz.scan", category="recon.passive", space="subghz",
                  params={"freq_mhz": {"type": "number", "min": 300, "max": 928},
                          "seconds": {"type": "int", "min": 5, "max": 300}},
-                 fn=flipper.scan, build=lambda t, mode, scope, hw: flipper.build_scan(t, mode, scope, hw)),
+                 fn=yardstick.scan, binary="rfcat",
+                 build=lambda t, mode, scope, hw: yardstick.build_scan(t, mode, scope, hw)),
         ToolSpec(name="subghz.replay", category="rf.replay", space="subghz",
+                 params={"id": {"type": "name", "required": True},
+                         "freq_mhz": {"type": "number", "min": 300, "max": 928, "required": True}},
+                 fn=yardstick.replay, binary="rfcat",
+                 build=lambda t, mode, scope, hw: yardstick.build_replay(t, mode, scope, hw)),
+        ToolSpec(name="flipper.scan", category="recon.passive", space="subghz",
+                 params={"freq_mhz": {"type": "number", "min": 300, "max": 928},
+                         "seconds": {"type": "int", "min": 5, "max": 300}},
+                 fn=flipper.scan, build=lambda t, mode, scope, hw: flipper.build_scan(t, mode, scope, hw)),
+        ToolSpec(name="flipper.replay", category="rf.replay", space="subghz",
                  params={"id": {"type": "name", "required": True},
                          "freq_mhz": {"type": "number", "min": 300, "max": 928, "required": True}},
                  fn=flipper.replay, build=lambda t, mode, scope, hw: flipper.build_replay(t, mode, scope, hw)),
@@ -108,13 +118,18 @@ def default_registry() -> dict[str, ToolSpec]:
                          "client": {"type": "mac"},
                          "seconds": {"type": "int", "min": 5, "max": 60}},
                  fn=marauder.deauth, build=lambda t, mode, scope, hw: marauder.build_deauth(t, mode, scope, hw)),
-        # ---- ADS-B / AIS (second dongle if configured; else shares the main SDR lane) ----
+        # ---- Ham / two-way radio (main SDR lane; receive only) ---------------------------
+        ToolSpec(name="radio.bands", category="recon.passive", space="radio", binary="rtl_power",
+                 params={"band": {"type": "choice", "choices": radio.BAND_CHOICES},
+                         "seconds": {"type": "int", "min": 20, "max": 600}},
+                 fn=radio.bands, build=lambda t, mode, scope, hw: radio.build_bands(t, mode, scope, hw)),
+        ToolSpec(name="radio.aprs", category="recon.passive", space="radio", binary="direwolf",
+                 params={"seconds": {"type": "int", "min": 30, "max": 900}},
+                 fn=radio.aprs, build=lambda t, mode, scope, hw: radio.build_aprs(t, mode, scope, hw)),
+        # ---- ADS-B (second dongle if configured; else shares the main SDR lane) ----
         ToolSpec(name="air.adsb", category="recon.passive", space="sdr2",
                  params={"seconds": {"type": "int", "min": 10, "max": 600}},
                  fn=air.adsb, build=lambda t, mode, scope, hw: air.build_adsb(t, mode, scope, hw)),
-        ToolSpec(name="air.ais", category="recon.passive", space="sdr2",
-                 params={"seconds": {"type": "int", "min": 10, "max": 600}},
-                 fn=air.ais, build=lambda t, mode, scope, hw: air.build_ais(t, mode, scope, hw)),
     ]
     _add_kali_recon(specs)
     _add_kali_test(specs)

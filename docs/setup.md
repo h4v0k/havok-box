@@ -14,6 +14,28 @@ sudo ./scripts/kali-setup.sh --unattended --admin-pass 'secret'   # hands-free i
 Options: `--box-ip --lan-cidr --iface --no-recon --no-desktop --enable-console
 --unattended --app-dir --tailscale --wifi 'SSID:PASS' --ap-ssid <name>`.
 
+## Radios and tools it installs
+- Every tool the dashboard buttons call (nuclei, netexec, feroxbuster, p0f, onesixtyone, ldap-utils,
+  thc-ipv6, whatweb, smbclient, exploitdb, hydra, mitm6, Responder, testssl.sh, and more), plus
+  arp-scan, netdiscover and bettercap for quiet discovery.
+- **Yard Stick One:** rfcat. The Sub-GHz card uses the Yard Stick; the Flipper stays registered as a
+  backup (`flipper.scan` / `flipper.replay`).
+- **ZigBee dongle as a BLE sniffer:** Sniffle is cloned to `/opt/sniffle`. Flash the dongle once with
+  `sudo scripts/flash-sniffle.sh` (it confirms first; wrong firmware can brick the dongle, and the
+  script picks the right build for the Dongle Plus-P).
+- **ADS-B (aircraft):** readsb is built from source (a few minutes on a Pi 5). Ship tracking (AIS) was removed.
+- **Point-and-click tools on the desktop:** Wireshark, Zenmap, gqrx (spectrum viewer, and the way
+  to **listen** to VHF/UHF voice: click a signal, pick NFM), Universal Radio Hacker (sub-GHz capture
+  and analysis), and CHIRP (program the Baofeng ham/GMRS handhelds over their USB cable).
+- **Ham & two-way radio (receive only, RTL-SDR):** Dire Wolf for APRS, multimon-ng. The dashboard's
+  *Ham & two-way radio* card has **Who's talking** (active FRS/GMRS, MURS, NOAA weather, 2m and
+  70cm channels, named) and **APRS stations** (callsigns and positions on 144.390 MHz).
+- Radios work without sudo: the box user joins `dialout`/`plugdev`, udev rules cover the Yard Stick
+  and the RTL-SDR, and the DVB-T TV driver that grabs RTL-SDR dongles is blacklisted. Reboot once
+  after setup.
+
+Run `hb hw` after the reboot to see what's working.
+
 ## Wi-Fi: known networks first, the box's own network as fallback
 The Pi's **built-in** Wi-Fi (`--iface`, default `wlan0`) is the only radio NetworkManager manages;
 the Alfa and other radios are left to the recon tools.

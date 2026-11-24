@@ -341,11 +341,12 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("last", help="print the folder of the most recent scan")
     sub.add_parser("profiles", help="describe the scan profiles")
+    sub.add_parser("hw", help="check every board: plugged in? software answering?")
     sub.add_parser("menu", help="numbered menus in the terminal (also what plain 'hb' does)")
     sub.add_parser("gui", help="point-and-click windows on the Kali desktop")
 
     argv = sys.argv[1:] if argv is None else argv
-    subs = {"scan", "flow", "hosts", "ports", "diff", "last", "profiles", "menu", "gui"}
+    subs = {"scan", "flow", "hosts", "ports", "diff", "last", "profiles", "menu", "gui", "hw"}
     if not subs & set(argv) and not {"-h", "--help"} & set(argv):
         argv = [*argv, "menu"]  # plain 'hb' opens the menus
     a = ap.parse_args(argv)
@@ -356,6 +357,10 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "profiles":
             for k, (desc, flags) in PROFILES.items():
                 print(f"{k:<9} {desc}\n          nmap {' '.join(flags)}")
+            return 0
+        if a.cmd == "hw":
+            from . import hwcheck
+            print(hwcheck.render(hwcheck.check(missing_tools=hwcheck.missing_from_registry())))
             return 0
         if a.cmd == "last":
             print(latest_xml().parent)

@@ -174,15 +174,6 @@ class ReviewFixTest6(unittest.TestCase):
         self.assertNotIn("John", WardriveService._advice("wifi", "ap", False, None))
         self.assertIn("John", WardriveService._advice("wifi", "ap", False, "John's iPhone"))
 
-    def test_ais_refused_during_drive(self):
-        h, store, *_ = make()
-        h.cfg.hw = {"sdr2_serial": "ADSB01"}
-        class WD:
-            def running(self): return True
-        h.wardrive = WD()
-        self.assertEqual(h.scan({"space": "sdr2", "action": "ais"})[0], 409)
-        store.close()
-
 
 class TpmsExposureBandTest(GuardTest):
     def test_315_sensor_reaches_exposure_despite_alternation(self):

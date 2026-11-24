@@ -282,13 +282,19 @@ def act_past(ui, gui: bool) -> None:
         subprocess.Popen(["xdg-open", str(p.parent)])
 
 
+def act_hw(ui) -> None:
+    from . import hwcheck
+    ui.show("Hardware check", hwcheck.render(hwcheck.check(missing_tools=hwcheck.missing_from_registry())))
+
+
 MAIN = ["Scan a network or a host",
         "Quick workflow: find live hosts, scan them, write a report",
         "Show devices from a scan",
         "Show open ports from a scan",
         "Find hosts running a port or service",
         "Compare two scans (what changed)",
-        "Past scans"]
+        "Past scans",
+        "Check my hardware"]
 
 
 def run(scope_path: str, gui: bool = False) -> int:
@@ -306,7 +312,7 @@ def run(scope_path: str, gui: bool = False) -> int:
             try:
                 (lambda: act_scan(ui, scope), lambda: act_scan(ui, scope, flow=True), lambda: act_hosts(ui),
                  lambda: act_ports(ui), lambda: act_find(ui), lambda: act_diff(ui),
-                 lambda: act_past(ui, gui))[i]()
+                 lambda: act_past(ui, gui), lambda: act_hw(ui))[i]()
             except (ValueError, OSError, json.JSONDecodeError, ET.ParseError) as e:
                 ui.error(str(e))
     except (KeyboardInterrupt, EOFError):

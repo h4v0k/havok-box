@@ -113,6 +113,10 @@ function findingDetails(f) {
       text: `${ap.ssid || "(hidden)"} — ${ap.bssid} ch ${ap.channel ?? "?"}${twins.has(ap.bssid) ? "  EVIL TWIN" : ""}`,
     }));
   }
+  if (f.kind === "radio_bands") for (const b of d.bands || []) for (const a of b.active || [])
+    items.push(el("li", { text: `${a.mhz.toFixed(4)} MHz  ${a.label || b.band}  (+${a.above_floor_db} dB)` }));
+  if (f.kind === "aprs") for (const s of d.stations || [])
+    items.push(el("li", { text: `${s.call}  ${s.packets} pkt${s.lat != null ? `  ${s.lat}, ${s.lon}` : ""}  ${s.last || ""}` }));
   if (!items.length) items.push(...genericItems(d));
   if (!items.length) return null;
   const det = el("details", { open: openDetails.has(f.result_id) },
@@ -278,6 +282,19 @@ $("#report-gen") && $("#report-gen").addEventListener("click", async () => {
       : "Could not write a report: " + (r.reason || r.status);
   } catch (e) { $("#report-text").textContent = e.message; }
   $("#report-gen").disabled = false;
+});
+$("#hw-check") && $("#hw-check").addEventListener("click", async () => {
+  const btn = $("#hw-check"); btn.disabled = true;
+  $("#hw-rows").replaceChildren(el("p", { class: "hint", text: "Checking each board…" }));
+  try {
+    const r = await call("GET", "/api/hardware");
+    const label = { ok: "Working", check: "Needs attention", missing: "Not plugged in" };
+    $("#hw-rows").replaceChildren(...(r.rows || []).map(x => el("div", { class: "hw-row hw-" + x.status },
+      el("strong", { text: x.board }),
+      el("p", { text: (label[x.status] || x.status) + " — " + x.detail }),
+      x.fix ? el("p", { class: "hint", text: "Fix: " + x.fix }) : null)));
+  } catch (e) { $("#hw-rows").replaceChildren(el("p", { class: "warn", text: e.message })); }
+  btn.disabled = false;
 });
 function renderReportExtras() {
   const miss = state.missing_tools || [];

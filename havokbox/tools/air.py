@@ -1,5 +1,5 @@
-"""Air/sea RF tools on the second dongle: ADS-B aircraft (readsb) and AIS vessels (AIS-catcher).
-Passive receive only; no network listeners (Phase 6 #14, #15)."""
+"""Aircraft (ADS-B via readsb) on the RTL-SDR (second dongle if configured). Passive receive only;
+no network listeners (Phase 6 #14). Ship tracking (AIS) was removed at the owner's request."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,6 @@ import json
 from ..store import new_id
 
 EMERGENCY = {"7500": "hijack", "7600": "radio failure", "7700": "general emergency"}
-MAX_VESSELS = 64
 
 
 def _serial(hw) -> str:
@@ -51,56 +50,3 @@ def adsb(task: dict, ctx) -> dict:
     return {"result_id": new_id(), "space": "sdr2", "kind": "aircraft",
             "summary": f"{len(ac)} aircraft, {pos} with position, {len(em)} emergency",
             "data": {"aircraft": ac, "emergencies": em}}
-
-
-def build_ais(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
-    # AIS-catcher's "-d:N" selects by DEVICE INDEX, not serial, so the index is configured
-    # explicitly (hw.ais_device_index). UNCONFIRMED on device: "-o 5" = JSON per message on stdout.
-    idx = (hw or {}).get("ais_device_index")
-    dev = ["-d:" + str(int(idx))] if isinstance(idx, int) and not isinstance(idx, bool) and 0 <= idx < 8 else []
-    return [["timeout", str(_seconds(target)), "AIS-catcher"] + dev + ["-o", "5"]]
-
-
-def _num(v, bad):
-    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v != bad else None
-
-
-def parse_ais(stdout: str) -> list[dict]:
-    ships: dict[str, dict] = {}
-    for line in (stdout or "").splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            m = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(m, dict) or m.get("mmsi") in (None, ""):
-            continue
-        key = str(m["mmsi"])
-        if key not in ships and len(ships) >= MAX_VESSELS:
-            continue
-        v = ships.setdefault(key, {"mmsi": key, "name": None, "shiptype": None, "lat": None,
-                                   "lon": None, "speed": None, "course": None})
-        name = str(m.get("shipname") or "").strip("@ ").strip()
-        if name:
-            v["name"] = name
-        if m.get("shiptype") is not None:
-            v["shiptype"] = m["shiptype"]
-        lat, lon = _num(m.get("lat"), 91), _num(m.get("lon"), 181)
-        if lat is not None and lon is not None:
-            v["lat"], v["lon"] = lat, lon
-        for k, bad in (("speed", 102.3), ("course", 360)):
-            x = _num(m.get(k), bad)
-            if x is not None:
-                v[k] = x
-    return list(ships.values())
-
-
-def ais(task: dict, ctx) -> dict:
-    steps = build_ais(task.get("target", {}), ctx.mode, ctx.scope, ctx.hw)
-    out = [ctx.runner(argv) for argv in steps]
-    ships = parse_ais(out[0] if out else "")
-    return {"result_id": new_id(), "space": "sdr2", "kind": "vessels",
-            "summary": f"{len(ships)} vessel(s), {sum(1 for s in ships if s['lat'] is not None)} with position",
-            "data": {"vessels": ships}}

@@ -33,19 +33,22 @@ CARDS = [
     {"space": "ble", "title": "BLE", "sub": "SONOFF · Sniffle", "actions": [
         {"action": "scan", "label": "Scan BLE", "tool": "ble.scan",
          "hint": "Passive advertising sniff."}]},
-    {"space": "subghz", "title": "Sub-GHz", "sub": "Flipper Zero", "actions": [
+    {"space": "subghz", "title": "Sub-GHz", "sub": "Yard Stick One", "actions": [
         {"action": "scan", "label": "Scan sub-GHz", "tool": "subghz.scan",
-         "hint": "Listens on 433.92 MHz and lists saved captures."}]},
+         "hint": "Listens on 433.92 MHz, saves each signal it hears, lists saved captures."}]},
     {"space": "sdr", "title": "Wideband RX", "sub": "RTL-SDR", "actions": [
         {"action": "survey", "label": "Spectrum survey", "tool": "sdr.survey",
          "hint": "rtl_power sweep, strongest signals."},
         {"action": "decode", "label": "Decode IoT (433)", "tool": "sdr.decode",
          "hint": "rtl_433 on 433.92 MHz."}]},
-    {"space": "sdr2", "title": "Air & sea", "sub": "RTL-SDR · readsb / AIS-catcher", "actions": [
+    {"space": "radio", "title": "Ham & two-way radio", "sub": "RTL-SDR · receive only", "actions": [
+        {"action": "bands", "label": "Who's talking (VHF/UHF)", "tool": "radio.bands",
+         "hint": "FRS/GMRS, MURS, NOAA weather, 2m and 70cm: which channels are active."},
+        {"action": "aprs", "label": "APRS stations", "tool": "radio.aprs",
+         "hint": "2 min on 144.390 MHz. Ham stations heard, with positions."}]},
+    {"space": "sdr2", "title": "Aircraft", "sub": "RTL-SDR · readsb", "actions": [
         {"action": "adsb", "label": "Aircraft (ADS-B)", "tool": "air.adsb",
-         "hint": "60 s on 1090 MHz. Emergency squawks highlighted."},
-        {"action": "ais", "label": "Ships (AIS)", "tool": "air.ais",
-         "hint": "162 MHz; needs the AIS antenna near water."}]},
+         "hint": "60 s on 1090 MHz. Emergency squawks highlighted."}]},
     {"space": "esp", "title": "ESP Wi-Fi", "sub": "Marauder board", "actions": [
         {"action": "scan", "label": "Scan (ESP)", "tool": "marauder.scan",
          "hint": "Second radio; passive AP scan."}]},

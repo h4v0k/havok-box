@@ -108,3 +108,10 @@ main, .login { max-width: 46rem; margin: 0 auto; padding: 0 1rem 6rem; }
 .check input { width: 1.4rem; height: 1.4rem; }
 select.text { appearance: none; }
 .report-text { white-space: pre-wrap; line-height: 1.5; }
+
+/* hardware check rows: words carry the status; the left bar is a secondary cue */
+.hw-row { border-left: 6px solid var(--line, #888); padding: .5rem .75rem; margin: .5rem 0; }
+.hw-row p { margin: .2rem 0; }
+.hw-ok { border-left-color: #2e8b57; }
+.hw-check { border-left-color: #d49a00; }
+.hw-missing { border-left-color: var(--danger, #c0392b); }

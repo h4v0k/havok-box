@@ -39,6 +39,8 @@ transmits on any radio or writes to any other device.
 
 ## 5. ADS-B / AIS receiver (aircraft + ships)
 
+> **Update (Nov 2026):** AIS (ships) was removed at the owner's request. Only ADS-B remains.
+
 - Two passive recon tools on the RTL-SDR lane: `sdr.adsb` (readsb/dump1090 for N seconds, JSON
   aircraft list: hex, callsign, altitude, speed, track, position, squawk) and `sdr.ais`
   (AIS-catcher JSON for N seconds: MMSI, name, type, position, speed, course).

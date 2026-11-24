@@ -28,7 +28,7 @@ import time
 from .config import MODES, BoxConfig
 from .store import new_id
 
-SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "sdr2", "esp")
+SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "sdr2", "radio", "esp")
 WARDRIVE_LANES = ("wifi", "ble", "esp", "sdr", "subghz")
 
 
@@ -149,6 +149,8 @@ class Handlers:
         (one dongle can't be opened twice; wardrive/survey holds then apply)."""
         if space == "sdr2" and not (self.cfg.hardware().get("sdr2_serial") or ""):
             return "sdr"
+        if space == "radio":            # ham/VHF/UHF receive uses the main dongle
+            return "sdr"
         return space
 
     def __init__(self, api, cfg: BoxConfig, jobs: Jobs, publisher=None):
@@ -222,8 +224,6 @@ class Handlers:
             return 200, prep
         task = prep["task"]
         wd = self._wd()
-        if task.get("tool") == "air.ais" and wd is not None and wd.running():
-            return 409, {"status": "error", "reason": "AIS is a parked/manual scan; not during a drive"}
         try:
             job = self.jobs.submit(f"{task['label']} [{mode}]", lambda: self.api.execute_scan(task),
                                    lane=self.lane_for(space))
@@ -611,6 +611,12 @@ class Handlers:
         self.api.store.log("console", f"console link issued to {client_ip}")
         return 200, {"status": "ok", "url": f"https://{self.cfg.box_address}:{self.cfg.console_port}/"}
 
+    def hardware(self) -> tuple[int, dict]:
+        """Board-by-board check (read-only: lsusb, SDR EEPROM, gpsd, rflib import)."""
+        from . import hwcheck
+        inv = getattr(self.api, "inventory", None)
+        return 200, {"rows": hwcheck.check(missing_tools=inv.missing if inv else None)}
+
     def desktop(self, client_ip: str | None) -> tuple[int, dict]:
         """Remote desktop (noVNC) link. Same guard posture as the Console: enabled, box-LAN, TLS."""
         if not self.cfg.desktop_enabled_now():
@@ -910,6 +916,9 @@ def create_app(handlers: Handlers | None = None):
     async def get_console(request):
         return reply(h.console(request.client.host if request.client else None))
 
+    async def get_hardware(request):
+        return reply(await run_in_threadpool(h.hardware))   # shells out; can take ~20 s
+
     async def get_desktop(request):
         return reply(h.desktop(request.client.host if request.client else None))
 
@@ -923,6 +932,7 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/jobs/{job_id}", get_job),
         Route("/api/console", get_console),
         Route("/api/desktop", get_desktop),
+        Route("/api/hardware", get_hardware),
         Route("/api/publish", post_publish, methods=["POST"]),
         Route("/api/wardrive/start", wd_start, methods=["POST"]),
         Route("/api/wardrive/stop", wd_stop, methods=["POST"]),
