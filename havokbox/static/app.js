@@ -115,6 +115,9 @@ function findingDetails(f) {
   }
   if (f.kind === "radio_bands") for (const b of d.bands || []) for (const a of b.active || [])
     items.push(el("li", { text: `${a.mhz.toFixed(4)} MHz  ${a.label || b.band}  (+${a.above_floor_db} dB)` }));
+  if (f.kind === "mesh_nodes") for (const n of d.nodes || [])
+    items.push(el("li", { text: `${n.name || n.id} (${n.short || "?"})  ${n.last_heard_s != null ? Math.round(n.last_heard_s / 60) + " min ago" : "never"}` +
+      `${n.snr != null ? "  SNR " + n.snr : ""}${n.hops != null ? "  " + n.hops + " hop(s)" : ""}${n.lat != null ? `  ${n.lat}, ${n.lon}` : ""}` }));
   if (f.kind === "aprs") for (const s of d.stations || [])
     items.push(el("li", { text: `${s.call}  ${s.packets} pkt${s.lat != null ? `  ${s.lat}, ${s.lon}` : ""}  ${s.last || ""}` }));
   if (!items.length) items.push(...genericItems(d));

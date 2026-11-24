@@ -34,6 +34,9 @@ DEFAULT_HW = {
     "sdr2_serial": "",      # optional second dongle: ADS-B
     "tmpfs_dir": "/run/havokbox",   # scratch for readsb JSON (RAM, not the data partition)  # Sniffle checkout (python_cli/sniff_receiver.py)
     "work_dir": "/data/havokbox/work",
+    "data_dir": "/data/havokbox",
+    "mesh_port": "",        # Meshtastic node, e.g. /dev/serial/by-id/usb-Espressif...; blank = auto
+    "mesh_owner": "",       # your phone's node id, e.g. "!a1b2c3d4"; only it gets alerts/replies
 }
 
 

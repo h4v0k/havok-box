@@ -43,6 +43,7 @@ LABELS = {
     "air.adsb": "Aircraft (ADS-B)",
     "radio.bands": "Who's talking (VHF/UHF)",
     "radio.aprs": "APRS stations (144.39 MHz)",
+    "mesh.nodes": "Meshtastic nodes nearby",
     "responder.analyze": "Listen for name requests (Responder -A)",
     "p0f.listen": "Passive OS fingerprint (p0f)",
     "cleartext.find": "Find cleartext services",

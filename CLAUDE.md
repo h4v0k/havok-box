@@ -2,7 +2,8 @@
 
 A lab-only network/RF recon box: Raspberry Pi 5 running Kali, in a hard case, with an Alfa
 AWUS036ACM (Wi-Fi), two RTL-SDR Blog V4 dongles, a SONOFF CC2652P dongle running Sniffle (BLE), a
-Yard Stick One (sub-GHz), and a u-blox GPS. The owner (havok) drives it from a phone dashboard, the
+Yard Stick One (sub-GHz), a u-blox GPS, and a Heltec V4 Meshtastic node (LoRa link to the
+owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone dashboard, the
 `hb` command, SSH, or the Kali desktop.
 
 ## Ground rules (apply to every session, on the box or in the repo)
@@ -16,7 +17,8 @@ Yard Stick One (sub-GHz), and a u-blox GPS. The owner (havok) drives it from a p
   through the dashboard, where it needs the owner's per-action approval. Don't start those from a
   shell.
 - **Receive is fine, transmit isn't.** The SDRs only listen. Never run Yard Stick/rfcat transmit,
-  aireplay-ng, mdk4 or similar from here.
+  aireplay-ng, mdk4 or similar from here. The one exception is the Meshtastic bridge, which messages
+  the owner's own node. Keep its replies report-only.
 - **Don't touch secrets.** Leave `/etc/havokbox/`, `/data/havokbox/secrets/`, `config/box.json` and
   the dashboard token alone.
 - **Ask before you change** system config: networking (`havokbox-net`, NetworkManager), firewall,
@@ -27,7 +29,7 @@ Yard Stick One (sub-GHz), and a u-blox GPS. The owner (havok) drives it from a p
 - `hb`: menus. `hb hw`: is every board working? `hb profiles`, `hb scan <ip/cidr> -p quiet|standard|robust`,
   `hb hosts [--port N]`, `hb ports`, `hb flow <cidr>`, `hb diff old.xml new.xml`.
   Scans are saved in `/data/havokbox/scans/`.
-- `havokbox-net status`: which Wi-Fi the box is on.
+- `havokbox-net status`: which Wi-Fi the box is on. `journalctl -u havokbox-mesh -f`: the LoRa bridge.
 - `systemctl status havokbox-dashboard havokbox-watchdog`, `journalctl -u havokbox-watchdog -f`.
 - Results to read: `/data/havokbox/scans/*/scan.xml` and `report.md`, plus the evidence log in
   `/data/havokbox/evidence/`.

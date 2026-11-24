@@ -29,6 +29,11 @@ command -v lsusb >/dev/null || { echo "install usbutils first" >&2; exit 1; }
 if ! lsusb -d 10c4:ea60 >/dev/null 2>&1; then
   echo "No Silicon Labs CP210x dongle found (10c4:ea60). Is the SONOFF dongle plugged in?" >&2; exit 1
 fi
+if [ "$(lsusb -d 10c4:ea60 | wc -l)" -gt 1 ]; then
+  echo "More than one CP210x USB-serial device is plugged in (some LoRa/ESP32 boards use the same chip)." >&2
+  echo "Unplug everything except the SONOFF dongle so the wrong board can't be flashed, then run again." >&2
+  exit 1
+fi
 [ -e "$PORT" ] || { echo "$PORT not found. Pass --port (ls /dev/ttyUSB*)" >&2; exit 1; }
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT

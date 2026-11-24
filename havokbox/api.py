@@ -43,9 +43,12 @@ CARDS = [
          "hint": "rtl_433 on 433.92 MHz."}]},
     {"space": "radio", "title": "Ham & two-way radio", "sub": "RTL-SDR · receive only", "actions": [
         {"action": "bands", "label": "Who's talking (VHF/UHF)", "tool": "radio.bands",
-         "hint": "FRS/GMRS, MURS, NOAA weather, 2m and 70cm: which channels are active."},
+         "hint": "FRS/GMRS, MURS, NOAA weather, 2m, 70cm and 915 MHz (LoRa): which channels are active."},
         {"action": "aprs", "label": "APRS stations", "tool": "radio.aprs",
          "hint": "2 min on 144.390 MHz. Ham stations heard, with positions."}]},
+    {"space": "mesh", "title": "LoRa mesh", "sub": "Meshtastic · Heltec V4", "actions": [
+        {"action": "nodes", "label": "Meshtastic nodes nearby", "tool": "mesh.nodes",
+         "hint": "Nodes the box's LoRa radio has heard: name, signal, hops, position if shared."}]},
     {"space": "sdr2", "title": "Aircraft", "sub": "RTL-SDR · readsb", "actions": [
         {"action": "adsb", "label": "Aircraft (ADS-B)", "tool": "air.adsb",
          "hint": "60 s on 1090 MHz. Emergency squawks highlighted."}]},

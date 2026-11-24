@@ -38,6 +38,8 @@ Claude Code is installed for the box user; see `docs/claude.md`.
 
 Run `hb hw` after the reboot to see what's working.
 
+LoRa link to your phone (Meshtastic, two Heltec V4s): see `docs/mesh.md`.
+
 ## Two RTL-SDR dongles
 Both dongles ship with the same serial, so give them different ones once with
 `sudo scripts/sdr-serials.sh`. It walks you through it one dongle at a time, then saves

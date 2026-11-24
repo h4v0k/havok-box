@@ -28,7 +28,7 @@ import time
 from .config import MODES, BoxConfig
 from .store import new_id
 
-SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "sdr2", "radio", "esp")
+SPACES = ("wired", "wifi", "ble", "subghz", "sdr", "sdr2", "radio", "mesh", "esp")
 WARDRIVE_LANES = ("wifi", "ble", "esp", "sdr", "subghz")
 
 
@@ -695,7 +695,10 @@ def build(cfg: BoxConfig | None = None):
     data_dir = os.path.dirname(cfg.db_path)
     wdb = WardriveDB(store, cfg.db_path, load_key(os.path.join(data_dir, "secrets", "wardrive.key")))
     from .wardrive.notify import Discord
-    notifier = Discord(cfg.discord_webhook, map_links=cfg.discord_map_links)
+    from .mesh import Fanout, MeshOutbox
+    # Alerts go to Discord (needs internet) and to your phone's Meshtastic node over LoRa (no internet)
+    notifier = Fanout(Discord(cfg.discord_webhook, map_links=cfg.discord_map_links),
+                      MeshOutbox(data_dir if cfg.hardware().get("mesh_owner") else None))
     h.reporter = h_reporter
     h.wardrive = WardriveService(wdb, jobs, orch, store, cfg.hardware(), scope=scope,
                                  mine=cfg.wardrive_mine, retention_days=cfg.wardrive_retention_days,

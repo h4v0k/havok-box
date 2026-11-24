@@ -502,6 +502,34 @@ if [ "$WANT_TAILSCALE" -eq 1 ]; then
   fi
 fi
 
+# ---- Meshtastic LoRa bridge (box <-> your phone over LoRa) ------------------------
+if [ "$WANT_RECON" -eq 1 ]; then
+  say "Meshtastic bridge"
+  "$VENV/bin/pip" install -q meshtastic >/dev/null 2>&1 && ok "meshtastic library installed" \
+    || warn "pip install meshtastic failed (is the box online?)"
+  install -d -m 0750 -o "$RUN_USER" -g "$RUN_USER" "$DATA_DIR/mesh" "$DATA_DIR/mesh/outbox"
+  cat > /etc/systemd/system/havokbox-mesh.service <<UNIT
+[Unit]
+Description=havok-box Meshtastic bridge (alerts to your phone; status/hw/last replies)
+After=network.target
+
+[Service]
+User=$RUN_USER
+Group=dialout
+WorkingDirectory=$APP_DIR
+Environment=PYTHONPATH=$APP_DIR
+Environment=HAVOKBOX_CONFIG=$CONFIG
+ExecStart=$VENV/bin/python -m havokbox.helpers.meshbridge run --data-dir $DATA_DIR
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload
+  systemctl enable havokbox-mesh >/dev/null 2>&1 && ok "Meshtastic bridge enabled (waits for the Heltec; set your node: scripts/mesh-owner.sh)"
+fi
+
 # ---- Claude Code (for the box user; run 'claude' in the repo to sign in) ----------
 if [ "$WANT_CLAUDE" -eq 1 ]; then
   say "Claude Code"

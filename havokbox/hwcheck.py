@@ -54,7 +54,7 @@ def wifi_monitor_iface(sys_net: str = "/sys/class/net", builtin: str = "wlan0") 
 
 
 def check(run=_run, which=shutil.which, exists=os.path.exists, wifi_iface=wifi_monitor_iface,
-          missing_tools: list[str] | None = None) -> list[dict]:
+          missing_tools: list[str] | None = None, mesh_status=None) -> list[dict]:
     rc, ls = run(["lsusb"])
     ids = usb_ids(ls) if rc == 0 else set()
     rows: list[dict] = []
@@ -137,6 +137,18 @@ def check(run=_run, which=shutil.which, exists=os.path.exists, wifi_iface=wifi_m
     else:
         row("GPS", MISSING, "not detected", "plug it into the hub")
 
+    # Meshtastic LoRa node (the bridge reports whether it has the radio)
+    st = (mesh_status or globals()["mesh_status"])()
+    if st is not None:
+        if st.get("connected"):
+            owner = st.get("owner")
+            row("LoRa node (Meshtastic)", OK if owner else WARN,
+                f"connected as {st.get('my_node') or '?'}" + (f", sends to {owner}" if owner else ""),
+                "" if owner else "set your phone's node id: sudo scripts/mesh-owner.sh !xxxxxxxx")
+        else:
+            row("LoRa node (Meshtastic)", WARN, "bridge can't reach the node"
+                + (f" ({st.get('error')})" if st.get("error") else ""), "plug the Heltec into the hub")
+
     # Backups and spares
     if "0483:5740" in ids:
         row("Flipper Zero (backup sub-GHz)", OK, "plugged in")
@@ -150,6 +162,16 @@ def check(run=_run, which=shutil.which, exists=os.path.exists, wifi_iface=wifi_m
     elif missing_tools is not None:
         row("Software", OK, "every button's tool is installed")
     return rows
+
+
+def mesh_status(path: str = "/data/havokbox/mesh/status.json") -> dict | None:
+    """None when the LoRa bridge has never run (no LoRa node in this build)."""
+    try:
+        import json
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
 
 
 def render(rows: list[dict]) -> str:

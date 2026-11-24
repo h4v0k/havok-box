@@ -3,7 +3,7 @@ runs under, and what typed params each takes. The orchestrator runs only what's 
 """
 from __future__ import annotations
 
-from . import ToolSpec, air, ble, flipper, kali_recon, kali_test, kismet, marauder, nmap, radio, sdr, wifi, wired, yardstick
+from . import ToolSpec, air, ble, flipper, kali_recon, kali_test, kismet, marauder, mesh, nmap, radio, sdr, wifi, wired, yardstick
 
 
 def default_registry() -> dict[str, ToolSpec]:
@@ -126,6 +126,9 @@ def default_registry() -> dict[str, ToolSpec]:
         ToolSpec(name="radio.aprs", category="recon.passive", space="radio", binary="direwolf",
                  params={"seconds": {"type": "int", "min": 30, "max": 900}},
                  fn=radio.aprs, build=lambda t, mode, scope, hw: radio.build_aprs(t, mode, scope, hw)),
+        # ---- Meshtastic LoRa (reads the bridge's snapshot; the bridge owns the radio) -----
+        ToolSpec(name="mesh.nodes", category="recon.passive", space="mesh",
+                 params={}, fn=mesh.nodes, build=lambda t, mode, scope, hw: mesh.build_nodes(t, mode, scope, hw)),
         # ---- ADS-B (second dongle if configured; else shares the main SDR lane) ----
         ToolSpec(name="air.adsb", category="recon.passive", space="sdr2",
                  params={"seconds": {"type": "int", "min": 10, "max": 600}},

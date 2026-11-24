@@ -30,8 +30,9 @@ BANDS: dict[str, tuple[float, float, float]] = {
     "gmrs": (462.5, 467.8, 6.25),     # FRS/GMRS share these channels
     "murs": (151.8, 154.62, 6.25),
     "noaa": (162.39, 162.56, 6.25),
+    "915": (902.0, 928.0, 25.0),      # ISM: LoRa/Meshtastic, LoRaWAN, sensors, meters
 }
-DEFAULT_BANDS = ("gmrs", "2m", "70cm", "murs", "noaa")
+DEFAULT_BANDS = ("gmrs", "2m", "70cm", "murs", "noaa", "915")
 
 
 def _channels() -> dict[float, str]:
@@ -64,6 +65,10 @@ def label_for(mhz: float, tol_khz: float = 7.0) -> str:
         return "2m repeater output range"
     if 442.0 <= mhz <= 445.0:
         return "70cm repeater output range"
+    if 906.5 <= mhz <= 907.5:
+        return "915 ISM: Meshtastic US default slot area"
+    if 902.0 <= mhz <= 928.0:
+        return "915 ISM: LoRa / sensors / meters"
     for name, (lo, hi, _) in BANDS.items():
         if lo <= mhz <= hi:
             return f"{name} band"
