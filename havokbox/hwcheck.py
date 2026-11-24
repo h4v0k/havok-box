@@ -74,22 +74,31 @@ def check(run=_run, which=shutil.which, exists=os.path.exists, wifi_iface=wifi_m
     else:
         row("Alfa Wi-Fi (AWUS036ACM)", MISSING, "not detected", "plug it into the hub")
 
-    # RTL-SDR Blog V4
-    if "0bda:2838" in ids:
-        if not which("rtl_eeprom"):
-            row("RTL-SDR V4", WARN, "plugged in, rtl-sdr tools not installed", "re-run kali-setup.sh")
-        else:
-            rc2, out = run(["rtl_eeprom"], 15)
+    # RTL-SDR Blog V4 dongle(s): main + optional second for ADS-B
+    n_sdr = len(re.findall(r"\bID 0bda:2838\b", ls, re.I)) if rc == 0 else 0
+    if n_sdr == 0:
+        row("RTL-SDR V4", MISSING, "not detected", "plug it into the hub")
+    elif not which("rtl_eeprom"):
+        row("RTL-SDR V4", WARN, "plugged in, rtl-sdr tools not installed", "re-run kali-setup.sh")
+    else:
+        serials = []
+        for i in range(min(n_sdr, 2)):
+            name = "RTL-SDR V4" if n_sdr == 1 else f"RTL-SDR V4 #{i + 1}"
+            rc2, out = run(["rtl_eeprom", "-d", str(i)], 15)
             serial = re.search(r"Serial number:\s*(\S+)", out)
             if rc2 == 0 or serial:
-                row("RTL-SDR V4", OK, f"answers (serial {serial.group(1) if serial else '?'})")
+                sv = serial.group(1) if serial else "?"
+                serials.append(sv)
+                role = {"HBSDR1": " (main)", "HBSDR2": " (aircraft)"}.get(sv, "")
+                row(name, OK, f"answers (serial {sv}){role}")
             else:
                 busy = "usb_claim_interface" in out or "busy" in out.lower()
-                row("RTL-SDR V4", WARN, "plugged in but won't open" + (" (in use)" if busy else ""),
+                row(name, WARN, "plugged in but won't open" + (" (in use)" if busy else ""),
                     "another program has it; stop it" if busy
                     else "reboot so the TV-tuner driver blacklist takes effect")
-    else:
-        row("RTL-SDR V4", MISSING, "not detected", "plug it into the hub")
+        if n_sdr >= 2 and (len(set(serials)) < len(serials) or not {"HBSDR1", "HBSDR2"} <= set(serials)):
+            row("RTL-SDR pair", WARN, "two dongles, but their serials aren't set apart yet",
+                "sudo scripts/sdr-serials.sh (once)")
 
     # SONOFF Dongle Plus-P (CP210x bridge) running Sniffle
     if "10c4:ea60" in ids:

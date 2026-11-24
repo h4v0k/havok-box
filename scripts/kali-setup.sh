@@ -23,6 +23,7 @@
 #   --tailscale          install Tailscale; then run 'sudo tailscale up' once to sign in
 #   --wifi 'SSID:PASS'   a known network to join (repeat; first = preferred). Prompted if none given
 #   --ap-ssid <name>     the box's own fallback network name  (default free-candy-van)
+#   --no-claude          don't install Claude Code
 #   --unattended         never prompt; needs --admin-pass (or env) or one is generated
 #   --app-dir <path>     where the repo lives                  (default: this repo)
 #   -h, --help           show this and exit
@@ -40,6 +41,7 @@ WANT_RECON=1
 WANT_DESKTOP=1
 WANT_CONSOLE=0
 WANT_TAILSCALE=0
+WANT_CLAUDE=1
 WIFI_LIST=()
 AP_SSID="free-candy-van"
 UNATTENDED=0
@@ -69,6 +71,7 @@ while [ $# -gt 0 ]; do
     --no-desktop)    WANT_DESKTOP=0; shift;;
     --enable-console) WANT_CONSOLE=1; shift;;
     --tailscale)     WANT_TAILSCALE=1; shift;;
+    --no-claude)     WANT_CLAUDE=0; shift;;
     --wifi)          WIFI_LIST+=("$2"); shift 2;;
     --ap-ssid)       AP_SSID="$2"; shift 2;;
     --unattended)    UNATTENDED=1; shift;;
@@ -496,6 +499,33 @@ if [ "$WANT_TAILSCALE" -eq 1 ]; then
     else ok "tailscale installed: run 'sudo tailscale up' and open the link it prints to sign in"; fi
   else
     warn "tailscale install failed (is the box online?)"
+  fi
+fi
+
+# ---- Claude Code (for the box user; run 'claude' in the repo to sign in) ----------
+if [ "$WANT_CLAUDE" -eq 1 ]; then
+  say "Claude Code"
+  RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+  if [ -x "$RUN_HOME/.local/bin/claude" ] || sudo -u "$RUN_USER" -H bash -c 'command -v claude' >/dev/null 2>&1; then
+    ok "Claude Code already installed"
+  elif sudo -u "$RUN_USER" -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash' >/dev/null 2>&1; then
+    ok "Claude Code installed: cd $APP_DIR && claude  (first run shows a sign-in link)"
+  else
+    warn "Claude Code install failed (is the box online?). Retry: curl -fsSL https://claude.ai/install.sh | bash"
+  fi
+  if [ "$WANT_DESKTOP" -eq 1 ]; then
+    cat > /usr/share/applications/havok-box-claude.desktop <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Claude Code (havok-box)
+Comment=Claude Code in the havok-box folder
+Exec=bash -lc 'cd $APP_DIR && exec \$HOME/.local/bin/claude'
+Icon=utilities-terminal
+Terminal=true
+Categories=Development;
+DESKTOP
+    install -d -o "$RUN_USER" -g "$RUN_USER" "$RUN_HOME/Desktop"
+    install -m 0755 -o "$RUN_USER" -g "$RUN_USER" /usr/share/applications/havok-box-claude.desktop "$RUN_HOME/Desktop/"
   fi
 fi
 

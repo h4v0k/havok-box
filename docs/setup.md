@@ -12,7 +12,9 @@ sudo ./scripts/kali-setup.sh --unattended --admin-pass 'secret'   # hands-free i
 ```
 
 Options: `--box-ip --lan-cidr --iface --no-recon --no-desktop --enable-console
---unattended --app-dir --tailscale --wifi 'SSID:PASS' --ap-ssid <name>`.
+--unattended --app-dir --tailscale --wifi 'SSID:PASS' --ap-ssid <name> --no-claude`.
+
+Claude Code is installed for the box user; see `docs/claude.md`.
 
 ## Radios and tools it installs
 - Every tool the dashboard buttons call (nuclei, netexec, feroxbuster, p0f, onesixtyone, ldap-utils,
@@ -35,6 +37,12 @@ Options: `--box-ip --lan-cidr --iface --no-recon --no-desktop --enable-console
   after setup.
 
 Run `hb hw` after the reboot to see what's working.
+
+## Two RTL-SDR dongles
+Both dongles ship with the same serial, so give them different ones once with
+`sudo scripts/sdr-serials.sh`. It walks you through it one dongle at a time, then saves
+`HBSDR1` (main: spectrum, 433 decode, ham/VHF/UHF, wardrive) and `HBSDR2` (aircraft, on its 1090 MHz
+antenna) into `config/box.json`. ADS-B then runs alongside everything else instead of taking turns.
 
 ## Wi-Fi: known networks first, the box's own network as fallback
 The Pi's **built-in** Wi-Fi (`--iface`, default `wlan0`) is the only radio NetworkManager manages;

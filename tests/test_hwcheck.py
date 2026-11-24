@@ -73,3 +73,22 @@ def test_wifi_iface_skips_builtin(tmp_path):
     (tmp_path / "wlan0" / "wireless").mkdir()
     (tmp_path / "wlan1" / "wireless").mkdir()
     assert hwcheck.wifi_monitor_iface(str(tmp_path)) == "wlan1"
+
+
+def test_two_sdrs_need_distinct_serials():
+    two = LSUSB_ALL + "Bus 001 Device 007: ID 0bda:2838 Realtek Semiconductor Corp. RTL2838 DVB-T\n"
+    same = fake_run({("lsusb",): (0, two), ("rtl_eeprom",): (0, "Serial number:\t00000001\n")})
+    rows = hwcheck.check(run=same, which=lambda b: "/x", exists=lambda p: False, wifi_iface=lambda: None)
+    b = by_board(rows)
+    assert "RTL-SDR V4 #1" in b and "RTL-SDR V4 #2" in b
+    assert "sdr-serials" in b["RTL-SDR pair"]["fix"]
+
+    def run(argv, timeout=10):
+        if argv[0] == "lsusb":
+            return 0, two
+        if argv[0] == "rtl_eeprom":
+            return 0, "Serial number:\tHBSDR%d\n" % (int(argv[2]) + 1)
+        return 1, ""
+    b = by_board(hwcheck.check(run=run, which=lambda b: "/x", exists=lambda p: False, wifi_iface=lambda: None))
+    assert "(main)" in b["RTL-SDR V4 #1"]["detail"] and "(aircraft)" in b["RTL-SDR V4 #2"]["detail"]
+    assert "RTL-SDR pair" not in b
