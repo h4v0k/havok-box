@@ -30,7 +30,7 @@ def test_everything_working():
                          wifi_iface=lambda: "wlan1", missing_tools=[])
     b = by_board(rows)
     assert all(r["status"] == "ok" for r in rows), hwcheck.render(rows)
-    assert "wlan1" in b["Alfa Wi-Fi"]["detail"] and "00000001" in b["RTL-SDR V4"]["detail"]
+    assert "wlan1" in b["Alfa Wi-Fi"]["detail"] and "00000001" in b["RTL-SDR V3"]["detail"]
     assert b["GPS"]["detail"] == "3D fix"
     assert "CC1101 on SPI" in hwcheck.render(rows)
 
@@ -39,7 +39,7 @@ def test_nothing_plugged_and_missing_software():
     rows = hwcheck.check(run=fake_run({("lsusb",): (0, "")}), which=lambda b: None, exists=lambda p: False,
                          wifi_iface=lambda: None, missing_tools=["air.adsb", "ble.scan"])
     b = by_board(rows)
-    for k in ("Alfa Wi-Fi", "RTL-SDR V4", "ZigBee dongle", "Yard Stick One", "GPS"):
+    for k in ("Alfa Wi-Fi", "RTL-SDR V3", "ZigBee dongle", "Yard Stick One", "GPS"):
         assert b[k]["status"] == "missing" and b[k]["fix"]
     assert b["Software"]["status"] == "check" and "air.adsb" in b["Software"]["detail"]
     assert "Flipper Zero" not in b
@@ -53,7 +53,7 @@ def test_needs_attention_cases():
     flashed = {hwcheck.SNIFFLE_DIR + "/python_cli/sniff_receiver.py"}
     rows = hwcheck.check(run=run, which=lambda b: "/x", exists=lambda p: p in flashed, wifi_iface=lambda: None)
     b = by_board(rows)
-    assert b["RTL-SDR V4"]["status"] == "check" and "in use" in b["RTL-SDR V4"]["detail"]
+    assert b["RTL-SDR V3"]["status"] == "check" and "in use" in b["RTL-SDR V3"]["detail"]
     assert "flash-sniffle" in b["ZigBee dongle"]["fix"]
     assert "rfcat" in b["Yard Stick One"]["fix"]
     assert b["GPS"]["detail"] == "talking to gpsd, no fix yet"
@@ -80,7 +80,7 @@ def test_two_sdrs_need_distinct_serials():
     same = fake_run({("lsusb",): (0, two), ("rtl_eeprom",): (0, "Serial number:\t00000001\n")})
     rows = hwcheck.check(run=same, which=lambda b: "/x", exists=lambda p: False, wifi_iface=lambda: None)
     b = by_board(rows)
-    assert "RTL-SDR V4 #1" in b and "RTL-SDR V4 #2" in b
+    assert "RTL-SDR V3 #1" in b and "RTL-SDR V3 #2" in b
     assert "sdr-serials" in b["RTL-SDR pair"]["fix"]
 
     def run(argv, timeout=10):
@@ -90,7 +90,7 @@ def test_two_sdrs_need_distinct_serials():
             return 0, "Serial number:\tHBSDR%d\n" % (int(argv[2]) + 1)
         return 1, ""
     b = by_board(hwcheck.check(run=run, which=lambda b: "/x", exists=lambda p: False, wifi_iface=lambda: None))
-    assert "(main)" in b["RTL-SDR V4 #1"]["detail"] and "(aircraft)" in b["RTL-SDR V4 #2"]["detail"]
+    assert "(main)" in b["RTL-SDR V3 #1"]["detail"] and "(aircraft)" in b["RTL-SDR V3 #2"]["detail"]
     assert "RTL-SDR pair" not in b
 
 

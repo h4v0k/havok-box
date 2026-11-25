@@ -110,7 +110,7 @@ SPACES = [
     {
         "id": "radio",
         "label": "Ham & two-way radio",
-        "radio": "RTL-SDR Blog V4 (receive only)",
+        "radio": "RTL-SDR Blog V3 (receive only)",
         "discover": [
             {"id": "radio.bands", "label": "Who's talking", "tool": "rtl_power", "category": "recon.passive",
              "needs": None, "what": "Which FRS/GMRS, MURS, NOAA, 2m and 70cm channels are active."},
@@ -123,7 +123,7 @@ SPACES = [
     {
         "id": "spectrum",
         "label": "Spectrum",
-        "radio": "RTL-SDR Blog V4",
+        "radio": "RTL-SDR Blog V3",
         "discover": [
             {"id": "spectrum.sweep", "label": "Sweep spectrum", "tool": "rtl_power", "category": "recon.passive",
              "needs": None, "what": "Show where the radio activity is."},

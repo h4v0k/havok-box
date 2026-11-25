@@ -59,5 +59,5 @@ Adding a tool:
 ## Hardware
 
 Pi 5 (8GB) · Alfa AWUS036ACM (Wi-Fi) · SONOFF ZBDongle-P running Sniffle (BLE) · Flipper Zero + Marauder
-board (sub-GHz / ESP Wi-Fi) · RTL-SDR Blog V4 (wideband RX) · GPYes u-blox 8 (GPS). HackRF/PortaPack is
+board (sub-GHz / ESP Wi-Fi) · RTL-SDR Blog V3 (wideband RX) · GPYes u-blox 8 (GPS). HackRF/PortaPack is
 not part of this build.

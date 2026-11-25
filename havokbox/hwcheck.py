@@ -85,16 +85,16 @@ def check(run=_run, which=shutil.which, exists=os.path.exists, wifi_iface=wifi_m
     else:
         row("Alfa Wi-Fi", MISSING, "not detected", "plug it into the hub")
 
-    # RTL-SDR Blog V4 dongle(s): main + optional second for ADS-B
+    # RTL-SDR Blog V3 dongle(s): main + optional second for ADS-B
     n_sdr = len(re.findall(r"\bID 0bda:2838\b", ls, re.I)) if rc == 0 else 0
     if n_sdr == 0:
-        row("RTL-SDR V4", MISSING, "not detected", "plug it into the hub")
+        row("RTL-SDR V3", MISSING, "not detected", "plug it into the hub")
     elif not which("rtl_eeprom"):
-        row("RTL-SDR V4", WARN, "plugged in, rtl-sdr tools not installed", "re-run kali-setup.sh")
+        row("RTL-SDR V3", WARN, "plugged in, rtl-sdr tools not installed", "re-run kali-setup.sh")
     else:
         serials = []
         for i in range(min(n_sdr, 2)):
-            name = "RTL-SDR V4" if n_sdr == 1 else f"RTL-SDR V4 #{i + 1}"
+            name = "RTL-SDR V3" if n_sdr == 1 else f"RTL-SDR V3 #{i + 1}"
             rc2, out = run(["rtl_eeprom", "-d", str(i)], 15)
             serial = re.search(r"Serial number:\s*(\S+)", out)
             if rc2 == 0 or serial:

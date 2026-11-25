@@ -45,7 +45,7 @@ or service, compare two scans, browse past scans, and **check my hardware**.
 **Working**, **Needs attention** or **Not plugged in**, with the fix for each:
 
 - **Alfa:** detected, and its interface came up.
-- **RTL-SDR V4:** answers. The check reads its EEPROM, and flags it if another program has it open.
+- **RTL-SDR V3:** answers. The check reads its EEPROM, and flags it if another program has it open.
 - **ZigBee dongle:** Sniffle installed, and the firmware flashed (`sudo scripts/flash-sniffle.sh`, once).
 - **Yard Stick One:** detected, and rfcat installed.
 - **GPS:** gpsd reading it, and whether it has a 2D/3D fix.

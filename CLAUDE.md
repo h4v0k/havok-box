@@ -1,7 +1,7 @@
 # havok-box
 
 A lab-only network/RF recon box: Raspberry Pi 5 running Kali, in a hard case, with an Alfa
-AWUS036ACH (Wi-Fi), two RTL-SDR Blog V4 dongles, a SONOFF CC2652P dongle running Sniffle (BLE), a
+AWUS036ACH (Wi-Fi), two RTL-SDR Blog V3 dongles, a SONOFF CC2652P dongle running Sniffle (BLE), a
 Yard Stick One (sub-GHz), a u-blox GPS, and a Heltec V4 Meshtastic node (LoRa link to the
 owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone dashboard, the
 `hb` command, SSH, or the Kali desktop.
