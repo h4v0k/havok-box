@@ -399,6 +399,7 @@ if [ "$WANT_RECON" -eq 1 ]; then
   SRC="$OPT_DIR/src"; install -d "$SRC"
   if [ -d /opt/sniffle/.git ]; then git -C /opt/sniffle pull -q --ff-only >/dev/null 2>&1 || true
   else git clone -q --depth 1 https://github.com/nccgroup/Sniffle /opt/sniffle >/dev/null 2>&1 || true; fi
+  chmod -R a+rX /opt/sniffle 2>/dev/null || true   # root's umask can make the clone unreadable to the box user
   [ -f /opt/sniffle/python_cli/sniff_receiver.py ] && ok "Sniffle at /opt/sniffle (flash the dongle once: sudo $APP_DIR/scripts/flash-sniffle.sh)" \
     || warn "Sniffle clone failed (is the box online?)"
   if ! command -v readsb >/dev/null; then
@@ -532,6 +533,9 @@ UNIT
   systemctl daemon-reload
   systemctl enable havokbox-mesh >/dev/null 2>&1 && ok "Meshtastic bridge enabled (waits for the Heltec; set your node: scripts/mesh-owner.sh)"
 fi
+
+# ---- make sure the box user can run what root just installed (umask 027/077 on some images) --
+chmod -R a+rX "$OPT_DIR" 2>/dev/null || true
 
 # ---- Claude Code (for the box user; run 'claude' in the repo to sign in) ----------
 if [ "$WANT_CLAUDE" -eq 1 ]; then

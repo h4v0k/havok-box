@@ -5,7 +5,7 @@ Lab-only wrappers around standard installed Kali tools. Each tool has a determin
 argv through ctx.runner and parses. Nothing here sends exploits, payloads, or credentials, and
 nothing extracts credentials from traffic.
 
-Binaries (for ToolSpec.binary): responder, p0f, tshark, detect-new-ip6, nuclei, testssl.sh,
+Binaries (for ToolSpec.binary): responder, p0f, tshark, atk6-detect-new-ip6, nuclei, testssl,
 feroxbuster, netexec, ldapsearch, onesixtyone, searchsploit.
 """
 from __future__ import annotations
@@ -182,7 +182,7 @@ _V6MAC = re.compile(_MAC)
 
 def build_ipv6(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
     seconds = _int((target or {}).get("seconds"), 10, 300, 120)
-    return [["timeout", str(seconds), "detect-new-ip6", _iface(hw)]]
+    return [["timeout", str(seconds), "atk6-detect-new-ip6", _iface(hw)]]
 
 
 def parse_ipv6(stdout: str) -> list[dict]:
@@ -257,7 +257,7 @@ def nuclei_scan(task: dict, ctx) -> dict:
 # ---------------------------------------------------------------- tls.scan
 
 def build_tls(target: dict, mode: str, scope, hw: dict) -> list[list[str]]:
-    argv = ["testssl.sh"]
+    argv = ["testssl"]
     if mode == "stealth":
         argv.append("--fast")
     argv += ["--quiet", "--jsonfile", "/dev/stdout", target["ip"]]

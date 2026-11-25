@@ -170,7 +170,7 @@ class Builds(unittest.TestCase):
         self.assertEqual(k.build_p0f({"seconds": 1}, "x", None, HW)[0],
                          ["timeout", "10", "p0f", "-i", "eth9", "-o", "/dev/stdout"])
         self.assertEqual(k.build_ipv6({"seconds": 999}, "x", None, HW)[0],
-                         ["timeout", "300", "detect-new-ip6", "eth9"])
+                         ["timeout", "300", "atk6-detect-new-ip6", "eth9"])
         self.assertEqual(k.build_cleartext({"seconds": "bad"}, "x", None, HW)[0][:2], ["timeout", "120"])
 
     def test_cleartext_never_credentials(self):
@@ -201,8 +201,8 @@ class Builds(unittest.TestCase):
     def test_tls_stealth_vs_standard(self):
         s = k.build_tls({"ip": "10.0.0.5"}, "stealth", None, HW)[0]
         d = k.build_tls({"ip": "10.0.0.5"}, "standard", None, HW)[0]
-        self.assertEqual(s, ["testssl.sh", "--fast", "--quiet", "--jsonfile", "/dev/stdout", "10.0.0.5"])
-        self.assertEqual(d, ["testssl.sh", "--quiet", "--jsonfile", "/dev/stdout", "10.0.0.5"])
+        self.assertEqual(s, ["testssl", "--fast", "--quiet", "--jsonfile", "/dev/stdout", "10.0.0.5"])
+        self.assertEqual(d, ["testssl", "--quiet", "--jsonfile", "/dev/stdout", "10.0.0.5"])
 
     def test_misc_argv(self):
         t = {"ip": "10.0.0.5"}
