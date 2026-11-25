@@ -149,7 +149,10 @@ install_group "core"    "$CORE_PKGS"
 
 # ---- directories ------------------------------------------------------------
 say "Creating directories"
-install -d -m 0750 "$DATA_DIR" "$DATA_DIR/evidence" "$DATA_DIR/tls" "$OPT_DIR" "$ETC_DIR"
+install -d -m 0750 "$DATA_DIR" "$DATA_DIR/evidence" "$DATA_DIR/tls" "$ETC_DIR"
+# The venv and built tools hold no secrets; the box user (dashboard, hb) must be able to run them
+install -d -m 0755 "$OPT_DIR"
+chmod 0755 "$OPT_DIR"
 chown -R "$RUN_USER":"$RUN_USER" "$DATA_DIR"
 ok "$DATA_DIR  $OPT_DIR  $ETC_DIR"
 
