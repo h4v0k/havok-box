@@ -227,8 +227,12 @@ CA_CRT="$DATA_DIR/tls/box-ca.crt"
 if [ "$WANT_RECON" -eq 1 ] && command -v gpsd >/dev/null; then
   say "gpsd (read-only; wardrive GPS + Kismet gps=gpsd)"
   if [ -f /etc/default/gpsd ]; then
-    sed -i 's|^DEVICES=.*|DEVICES="/dev/ttyACM0 /dev/ttyUSB0"|; s|^GPSD_OPTIONS=.*|GPSD_OPTIONS="-n -b"|' /etc/default/gpsd || true
-    grep -q '^USBAUTO=' /etc/default/gpsd || echo 'USBAUTO="true"' >> /etc/default/gpsd
+    # Only the u-blox GPS. Never /dev/ttyUSB* or USB auto-grab: gpsd would hold the SONOFF/Sniffle,
+    # Meshtastic and other USB-serial radios' ports and block them.
+    GPS_DEV="$(ls /dev/serial/by-id/*u-blox* 2>/dev/null | head -1)"; GPS_DEV="${GPS_DEV:-/dev/ttyACM0}"
+    sed -i "s|^DEVICES=.*|DEVICES=\"$GPS_DEV\"|; s|^GPSD_OPTIONS=.*|GPSD_OPTIONS=\"-n -b\"|" /etc/default/gpsd || true
+    if grep -q '^USBAUTO=' /etc/default/gpsd; then sed -i 's|^USBAUTO=.*|USBAUTO="false"|' /etc/default/gpsd
+    else echo 'USBAUTO="false"' >> /etc/default/gpsd; fi
   fi
   systemctl enable --now gpsd.socket >/dev/null 2>&1 || warn "gpsd not started (no receiver yet is fine)"
   ok "gpsd configured (-b read-only)"
