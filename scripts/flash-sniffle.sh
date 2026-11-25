@@ -56,7 +56,14 @@ echo "This replaces the Zigbee firmware. Don't unplug it until this finishes."
 read -rp "Type FLASH to continue: " ans
 [ "$ans" = "FLASH" ] || { echo "Cancelled."; exit 0; }
 
-python3 "$WORK/bsl/cc2538-bsl.py" -p "$PORT" --bootloader-sonoff-usb -ewv "$WORK/$VARIANT"
+python3 -c 'import intelhex' 2>/dev/null || { echo "Installing python3-intelhex (needed to read .hex files)"; apt-get install -y -qq python3-intelhex; }
+# Newer libmagic reports Intel HEX as "text/x-hex", which cc2538-bsl doesn't recognise. Hide the
+# magic module so it falls back to the .hex file extension (and reads the file with intelhex).
+python3 -c 'import runpy, sys
+sys.modules["magic"] = None
+sys.argv = ["cc2538-bsl.py"] + sys.argv[1:]
+runpy.run_path("'"$WORK"'/bsl/cc2538-bsl.py", run_name="__main__")' \
+  -p "$PORT" --bootloader-sonoff-usb -ewv "$WORK/$VARIANT"
 install -d /var/lib/havokbox && date -Is > /var/lib/havokbox/sniffle-flashed   # read by 'hb hw'
 echo
 echo "Done. Unplug and replug the dongle, then test: python3 /opt/sniffle/python_cli/sniff_receiver.py -s $PORT -a"
