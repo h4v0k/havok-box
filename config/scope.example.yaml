@@ -6,11 +6,14 @@ name: home-lab
 owner: havok
 
 networks:
-  include:
-    - 10.10.0.0/24        # lab VLAN
-    - 192.168.50.0/24     # IoT test VLAN
+  # Lab targets normally come from an ENGAGEMENT (dashboard "Engagement" card or `hb engage`):
+  # find the lab, pick its networks, and they're in scope for 12 hours. List a range here only if
+  # it's a fixed lab that never moves.
+  include: []
+  # NEVER-TOUCH list. Engagements can't override it, and lab discovery skips it. Put your home
+  # network, gateways and anything that isn't a test target here.
   exclude:
-    - 10.10.0.1/32        # lab gateway, leave alone
+    - 192.168.1.0/24      # home network (example; use yours)
   # ISOLATED lab VLAN(s) where LLMNR/NBT-NS/mDNS poisoning and mitm6 are allowed. Leave EMPTY unless
   # this is a segmented test network with no production hosts — poisoning affects every host on it.
   poison_allowed: []

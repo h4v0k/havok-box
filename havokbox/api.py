@@ -259,6 +259,10 @@ class Api:
         if act is None:
             raise ValueError(f"unknown action: {action}")
         tool = _card_tool(act, mode)
+        if tool == "nmap.discovery" and not self.scope.include:
+            reason = "no engagement: find the lab and pick it on the Engagement card first"
+            self.store.log("refused", f"scan {space}: {reason}")
+            return {"status": "refused", "reason": reason}
         target = {"network": str(self.scope.include[0])} if tool == "nmap.discovery" else {}
         try:
             task = make_task(self.registry, tool, target, mode, f"scan:{space}", suggested=True,

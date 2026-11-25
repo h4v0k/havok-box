@@ -43,6 +43,33 @@
 
   <main>
     <section id="tab-recon">
+      <h2>Engagement</h2>
+      <div class="card" id="eng-card">
+        <p id="eng-now" aria-live="polite"></p>
+        <div id="eng-active" class="row" hidden>
+          <button type="button" id="eng-end" class="btn big">End engagement</button>
+        </div>
+        <div id="eng-setup">
+          <p class="hint">1. Find the lab. 2. Find hosts on it if you want. 3. Use it as the engagement. Scans only reach the engagement's networks, and never the never list.</p>
+          <button type="button" id="eng-find" class="btn big">Find lab networks</button>
+          <div id="eng-nets"></div>
+          <label for="eng-range">Or type a range (needs your approval to sweep)</label>
+          <input id="eng-range" class="big" inputmode="decimal" placeholder="10.20.0.0/24" autocomplete="off">
+          <label for="eng-name">Engagement name</label>
+          <input id="eng-name" class="big" placeholder="lab" maxlength="48" autocomplete="off">
+          <label for="eng-hours">Length</label>
+          <select id="eng-hours" class="big">
+            <option value="4">4 hours</option><option value="8">8 hours</option>
+            <option value="12" selected>12 hours</option><option value="24">24 hours</option>
+            <option value="72">72 hours</option>
+          </select>
+          <div class="row">
+            <button type="button" id="eng-sweep" class="btn big">Find hosts in typed range</button>
+            <button type="button" id="eng-use" class="btn big primary">Use typed range</button>
+          </div>
+        </div>
+        <p id="eng-msg" class="hint" aria-live="polite"></p>
+      </div>
       <div id="cards" class="cards"></div>
       <h2>Changes since baseline</h2>
       <div id="drift" class="card"></div>

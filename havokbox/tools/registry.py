@@ -3,7 +3,7 @@ runs under, and what typed params each takes. The orchestrator runs only what's 
 """
 from __future__ import annotations
 
-from . import ToolSpec, air, ble, flipper, kali_recon, kali_test, kismet, marauder, mesh, nmap, radio, sdr, wifi, wired, yardstick
+from . import ToolSpec, air, ble, flipper, kali_recon, kali_test, kismet, marauder, mesh, net, nmap, radio, sdr, wifi, wired, yardstick
 
 
 def default_registry() -> dict[str, ToolSpec]:
@@ -33,6 +33,13 @@ def default_registry() -> dict[str, ToolSpec]:
             space="wifi",
             build=lambda t, mode, scope, hw: [kismet.build_cmd(hw)],
         ),
+        # ---- lab discovery (engagements) ---------------------------------
+        ToolSpec(name="net.local", category="recon.passive", space="wired", params={},
+                 fn=net.local, build=lambda t, mode, scope, hw: net.build_local(t, mode, scope, hw)),
+        ToolSpec(name="net.find", category="recon.local", space="wired", binary="arp-scan",
+                 params={"network": {"type": "cidr", "required": True},
+                         "connected": {"type": "bool"}},
+                 fn=net.find, build=lambda t, mode, scope, hw: net.build_find(t, mode, scope, hw)),
         # ---- wired -------------------------------------------------------
         ToolSpec(name="wired.listen", category="recon.passive", space="wired",
                  params={"seconds": {"type": "int", "min": 10, "max": 600}},

@@ -147,6 +147,9 @@ def pick_scan(ui, title: str) -> Path | None:
 
 def pick_targets(ui, scope) -> list[str] | None:
     nets = [str(n) for n in scope.include]
+    if not nets:
+        ui.error("No engagement yet. Pick the lab first: 'Engagement: find and pick the lab'.")
+        return None
     opts = [f"{n}  (whole network)" for n in nets] + ["A host from my last scan", "Type an IP or range"]
     while True:
         i = ui.choose("What do you want to scan?", opts)
@@ -282,12 +285,65 @@ def act_past(ui, gui: bool) -> None:
         subprocess.Popen(["xdg-open", str(p.parent)])
 
 
+def _ns(**kw):
+    import argparse
+    return argparse.Namespace(**kw)
+
+
+def act_engage(ui, scope_path: str) -> None:
+    from . import engagement as E
+    from .tools import net
+    path = hbcli.engagement_path()
+    eng = E.read(path)
+    if eng:
+        i = ui.choose(f"Engagement {eng['name']}: {', '.join(eng['networks'])} ({E.time_left(eng)} left)",
+                      ["Keep going", "End the engagement"])
+        if i == 1 and ui.confirm("End it? Lab scans will be refused until you pick a lab again."):
+            E.end(path)
+            ui.show("Engagement", "Ended.")
+        return
+    never = hbcli._never(scope_path)
+    rows = net.candidates(net.parse_addrs(hbcli._ip_json(["ip", "-j", "-4", "addr"])), never)
+    usable = [r for r in rows if r["usable"]]
+    opts = [f"{r['network']:<18} on {r['iface']} (box is {r['box_ip']})" for r in usable] + ["Type a range"]
+    i = ui.choose("Which network is the lab?", opts)
+    if i is None:
+        return
+    if i < len(usable):
+        network = usable[i]["network"]
+    else:
+        network = ui.ask("Lab range (e.g. 10.20.0.0/24)")
+        if not network:
+            return
+    j = ui.choose(network, ["See who's up first (no ports)", "Use it as the engagement now"])
+    if j is None:
+        return
+    if j == 0:
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            # Choosing the range in this menu is the owner's confirmation for the sweep.
+            hbcli.cmd_find(_ns(scope=scope_path, network=network, dry_run=False),
+                           ask=lambda _q: "yes", interactive=True)
+        out = buf.getvalue()
+        ui.show(f"Who's up on {network}", out or "(nothing answered)")
+        if not ui.confirm(f"Use {network} as the engagement?"):
+            return
+    name = ui.ask("Engagement name (letters, numbers, - _)") or "lab"
+    k = ui.choose("How long?", ["12 hours", "4 hours", "8 hours", "24 hours", "72 hours"])
+    hours = (12, 4, 8, 24, 72)[k or 0]
+    eng = E.start(path, name, [network], never, hours=hours, by="hb")
+    ui.show("Engagement", f"{eng['name']}: {', '.join(eng['networks'])} for {E.time_left(eng)}.\n"
+                          "Scans now reach only this range (never the never list).")
+
+
 def act_hw(ui) -> None:
     from . import hwcheck
     ui.show("Hardware check", hwcheck.render(hwcheck.check(missing_tools=hwcheck.missing_from_registry())))
 
 
-MAIN = ["Scan a network or a host",
+MAIN = ["Engagement: find and pick the lab",
+        "Scan a network or a host",
         "Quick workflow: find live hosts, scan them, write a report",
         "Show devices from a scan",
         "Show open ports from a scan",
@@ -310,10 +366,15 @@ def run(scope_path: str, gui: bool = False) -> int:
             if i is None:
                 return 0
             try:
+                if i == 0:
+                    act_engage(ui, scope_path)
+                    scope = hbcli.load_scope(scope_path)   # pick up the new engagement
+                    continue
+                i -= 1
                 (lambda: act_scan(ui, scope), lambda: act_scan(ui, scope, flow=True), lambda: act_hosts(ui),
                  lambda: act_ports(ui), lambda: act_find(ui), lambda: act_diff(ui),
                  lambda: act_past(ui, gui), lambda: act_hw(ui))[i]()
-            except (ValueError, OSError, json.JSONDecodeError, ET.ParseError) as e:
+            except (ValueError, OSError, json.JSONDecodeError, ET.ParseError, hbcli.ScopeError) as e:
                 ui.error(str(e))
     except (KeyboardInterrupt, EOFError):
         print()

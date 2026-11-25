@@ -611,6 +611,60 @@ class Handlers:
         self.api.store.log("console", f"console link issued to {client_ip}")
         return 200, {"status": "ok", "url": f"https://{self.cfg.box_address}:{self.cfg.console_port}/"}
 
+    # ---- engagement scope (time-boxed lab networks) ------------------------------
+    def _eng_path(self) -> str | None:
+        return getattr(self.api.scope, "engagement_path", None)
+
+    def engagement_state(self) -> tuple[int, dict]:
+        from . import engagement as E
+        eng = E.read(self._eng_path())
+        never = [str(n) for n in self.api.scope.exclude]
+        if not eng:
+            return 200, {"status": "none", "never": never}
+        return 200, {"status": "active", "engagement": eng, "time_left": E.time_left(eng),
+                     "never": never}
+
+    def engagement_networks(self) -> tuple[int, dict]:
+        """Which networks is the box on right now? Read-only (`ip -j -4 addr`), nothing is sent."""
+        from .tools import net
+        run = getattr(self, "local_runner", None) or (
+            lambda argv: subprocess.run(argv, capture_output=True, text=True, timeout=10).stdout)
+        try:
+            addrs = net.parse_addrs(run(["ip", "-j", "-4", "addr"]))
+        except (OSError, subprocess.SubprocessError) as exc:
+            return 500, {"status": "error", "reason": str(exc)}
+        return 200, {"status": "ok", "networks": net.candidates(addrs, list(self.api.scope.exclude))}
+
+    def engagement_start(self, body) -> tuple[int, dict]:
+        from . import engagement as E
+        path = self._eng_path()
+        if not path:
+            return 503, {"status": "error", "reason": "engagement file not configured"}
+        b = body or {}
+        nets = b.get("networks")
+        if isinstance(nets, str):
+            nets = [nets]
+        if not isinstance(nets, list) or not nets or len(nets) > 8:
+            return 400, {"status": "error", "reason": "networks: 1-8 CIDR ranges"}
+        try:
+            # Dashboard engagements are private-range only; there is no public override here.
+            eng = E.start(path, self._str(b, "name", 48) or "lab", nets, self.api.scope.exclude,
+                          hours=b.get("hours", E.DEFAULT_HOURS), ssids=b.get("ssids") or (),
+                          allow_public=False, by="dashboard")
+        except (E.EngagementError, TypeError, ValueError) as exc:
+            return 400, {"status": "error", "reason": str(exc)}
+        self.api.store.log("engagement", f"started {eng['name']}: {', '.join(eng['networks'])} "
+                                         f"until {time.strftime('%H:%M', time.localtime(eng['expires']))}")
+        return 200, {"status": "active", "engagement": eng, "time_left": E.time_left(eng)}
+
+    def engagement_end(self) -> tuple[int, dict]:
+        from . import engagement as E
+        path = self._eng_path()
+        ended = bool(path) and E.end(path)
+        if ended:
+            self.api.store.log("engagement", "ended")
+        return 200, {"status": "none", "ended": ended}
+
     def hardware(self) -> tuple[int, dict]:
         """Board-by-board check (read-only: lsusb, SDR EEPROM, gpsd, rflib import)."""
         from . import hwcheck
@@ -662,7 +716,7 @@ def build(cfg: BoxConfig | None = None):
     # Fail-closed even when started without the watchdog (manual run, bare systemd unit).
     n = store.void_unconsumed_approvals()
     store.log("server", f"start: voided {n} unconsumed approval(s)")
-    scope = load_scope(cfg.scope_path)
+    scope = load_scope(cfg.scope_path, engagement_path=os.path.join(os.path.dirname(cfg.db_path), "engagement.json"))
     registry = default_registry()
     from .recipes import load_recipes
     from .scope import KNOWN as KNOWN_CATEGORIES
@@ -919,6 +973,19 @@ def create_app(handlers: Handlers | None = None):
     async def get_console(request):
         return reply(h.console(request.client.host if request.client else None))
 
+    async def eng_get(request):
+        return reply(h.engagement_state())
+
+    async def eng_start(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.engagement_start, b))
+
+    async def eng_nets(request):
+        return reply(await run_in_threadpool(h.engagement_networks))
+
+    async def eng_end(request):
+        return reply(await run_in_threadpool(h.engagement_end))
+
     async def get_hardware(request):
         return reply(await run_in_threadpool(h.hardware))   # shells out; can take ~20 s
 
@@ -936,6 +1003,10 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/console", get_console),
         Route("/api/desktop", get_desktop),
         Route("/api/hardware", get_hardware),
+        Route("/api/engagement", eng_get),
+        Route("/api/engagement/networks", eng_nets),
+        Route("/api/engagement/start", eng_start, methods=["POST"]),
+        Route("/api/engagement/end", eng_end, methods=["POST"]),
         Route("/api/publish", post_publish, methods=["POST"]),
         Route("/api/wardrive/start", wd_start, methods=["POST"]),
         Route("/api/wardrive/stop", wd_stop, methods=["POST"]),

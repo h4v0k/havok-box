@@ -108,9 +108,9 @@ def test_menu_scan_then_find_by_port(tmp_path, monkeypatch, capsys):
     scope = tmp_path / "scope.yaml"
     scope.write_text("networks:\n  include: [10.10.0.0/24]\n  exclude: [10.10.0.1/32]\n")
     answers = iter([
-        "1", "1", "2", "y", "",          # scan -> whole 10.10.0.0/24 -> quiet -> run -> continue
-        "5", "1", "445", "",             # find -> latest scan -> port 445 -> continue
-        "1", "3", "8.8.8.8", "0", "0",   # scan -> typed out-of-scope IP is refused -> back -> quit
+        "2", "1", "2", "y", "",          # scan -> whole 10.10.0.0/24 -> quiet -> run -> continue
+        "6", "1", "445", "",             # find -> latest scan -> port 445 -> continue
+        "2", "3", "8.8.8.8", "0", "0",   # scan -> typed out-of-scope IP is refused -> back -> quit
     ])
     monkeypatch.setattr("builtins.input", lambda *_: next(answers))
     assert hbmenu.run(str(scope)) == 0

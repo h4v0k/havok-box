@@ -3,9 +3,28 @@
 `hb` wraps standard nmap for use in the Console, over SSH, or in the Desktop terminal. It is
 installed by `scripts/kali-setup.sh` as `/usr/local/bin/hb`. Lab only.
 
-It follows the same scope file as the dashboard: every target must be an IP or CIDR inside
-`networks.include` in `config/scope.yaml`, hostnames are refused, and `networks.exclude` is always
-passed to nmap as `--exclude`. No scope file means no scan.
+It follows the same scope as the dashboard: every target must be an IP or CIDR inside the active
+**engagement** (or a fixed `networks.include`, if you keep one), hostnames are refused, and the
+**never list** (`networks.exclude` in `config/scope.yaml`) is always passed to nmap as `--exclude`.
+No engagement and no fixed include means no scan.
+
+## Engagements: find the lab, pick it, carry on
+
+Lab IPs change, so the scope is per engagement rather than fixed:
+
+1. **Find the lab.** `hb find` lists the networks the box is plugged into or joined (read from its
+   own interfaces, nothing is sent), marking any that are public, bigger than a /16 or on the never
+   list. `hb find 10.20.0.0/24` then shows who's up there (ARP sweep, no ports). A range the box
+   isn't attached to gets a ping sweep, and `hb` asks you to type `yes` first.
+2. **Pick it.** `hb engage start 10.20.0.0/24 --name lab-a` makes it the engagement for 12 hours
+   (`--hours` up to 72). Ranges must be private, no bigger than a /16, and off the never list.
+3. **Carry on.** `hb scan`, `hb flow` and the dashboard now reach only that range. Scan folders get
+   an `engagement.txt` with the name. `hb engage` shows the time left. `hb engage end` stops it,
+   and so does the clock: when it expires, lab scans are refused again.
+
+The menus (`hb`, `hb gui`) have this as the first item, **Engagement: find and pick the lab**. On
+the dashboard, it's the **Engagement** card at the top of Recon: **Find lab networks**, then
+**Find hosts** or **Use as engagement**.
 
 Unlike the dashboard buttons, `hb` does **not** ask for approval. You're at the keyboard, the same
 as in the Console.
@@ -13,7 +32,7 @@ as in the Console.
 ## No commands to remember
 
 - **`hb`** with nothing after it opens numbered menus: pick what to do, pick a network from your
-  scope file, a host from your last scan, or type an IP, then pick how hard to look.
+  engagement, a host from your last scan, or type an IP, then pick how hard to look.
 - **`hb gui`**, or the **havok-box scans** icon on the Kali desktop, does the same with clickable
   windows and a progress bar you can cancel.
 

@@ -299,6 +299,75 @@ $("#hw-check") && $("#hw-check").addEventListener("click", async () => {
   } catch (e) { $("#hw-rows").replaceChildren(el("p", { class: "warn", text: e.message })); }
   btn.disabled = false;
 });
+// ---- engagement: find the lab, pick it, run inside it ----------------------------
+let eng = null;
+async function loadEngagement() {
+  try { eng = await call("GET", "/api/engagement"); } catch (e) { eng = null; }
+  renderEngagement();
+}
+function renderEngagement() {
+  if (!$("#eng-card")) return;
+  const active = eng && eng.status === "active";
+  $("#eng-active").hidden = !active;
+  $("#eng-setup").hidden = !!active;
+  $("#eng-now").textContent = active
+    ? `In engagement "${eng.engagement.name}": ${eng.engagement.networks.join(", ")} — ${eng.time_left} left.`
+    : "No engagement. Scans of lab networks are refused until you pick one."
+      + (eng && eng.never && eng.never.length ? ` Never list: ${eng.never.join(", ")}.` : "");
+}
+async function startEngagement(networks) {
+  const name = $("#eng-name").value.trim() || "lab";
+  const hours = Number($("#eng-hours").value);
+  try {
+    const r = await call("POST", "/api/engagement/start", { name, networks, hours });
+    eng = r; $("#eng-msg").textContent = r.status === "active" ? "Engagement started." : (r.reason || r.status);
+  } catch (e) { $("#eng-msg").textContent = e.message; }
+  renderEngagement(); refresh();
+}
+async function findHosts(network, connected) {
+  try {
+    const target = connected ? { network, connected: true } : { network };
+    const r = await call("POST", "/api/tool", { tool: "net.find", target });
+    $("#eng-msg").textContent = r.status === "ok"
+      ? (r.needs_approval ? `Sweep of ${network} is waiting for your approval.` : `Finding hosts on ${network}… results show under Findings.`)
+      : (r.reason || r.status);
+  } catch (e) { $("#eng-msg").textContent = e.message; }
+  refresh();
+}
+$("#eng-find") && $("#eng-find").addEventListener("click", async () => {
+  $("#eng-nets").replaceChildren(el("p", { class: "hint", text: "Looking at the box's network ports…" }));
+  try {
+    const r = await call("GET", "/api/engagement/networks");
+    const nets = r.networks || [];
+    $("#eng-nets").replaceChildren(...(nets.length ? nets.map(n => {
+      const row = el("div", { class: "hw-row " + (n.usable ? "hw-ok" : "hw-check") },
+        el("strong", { text: n.network }),
+        el("p", { text: `on ${n.iface} (box is ${n.box_ip})` + (n.usable ? "" : ` — can't use: ${n.why_not}`) }));
+      if (n.usable) {
+        const b1 = el("button", { type: "button", class: "btn big", text: "Find hosts" });
+        b1.addEventListener("click", () => findHosts(n.network, true));
+        const b2 = el("button", { type: "button", class: "btn big primary", text: "Use as engagement" });
+        b2.addEventListener("click", () => startEngagement([n.network]));
+        row.append(el("div", { class: "row" }, b1, b2));
+      }
+      return row;
+    }) : [el("p", { class: "empty", text: "The box isn't on any network right now." })]));
+  } catch (e) { $("#eng-nets").replaceChildren(el("p", { class: "warn", text: e.message })); }
+});
+$("#eng-sweep") && $("#eng-sweep").addEventListener("click", () => {
+  const v = $("#eng-range").value.trim(); if (v) findHosts(v, false);
+});
+$("#eng-use") && $("#eng-use").addEventListener("click", () => {
+  const v = $("#eng-range").value.trim(); if (v) startEngagement([v]);
+});
+$("#eng-end") && $("#eng-end").addEventListener("click", async () => {
+  try { eng = await call("POST", "/api/engagement/end"); $("#eng-msg").textContent = "Engagement ended."; }
+  catch (e) { $("#eng-msg").textContent = e.message; }
+  loadEngagement(); refresh();
+});
+loadEngagement();
+setInterval(loadEngagement, 60000);
+
 function renderReportExtras() {
   const miss = state.missing_tools || [];
   $("#missing-tools").replaceChildren(miss.length

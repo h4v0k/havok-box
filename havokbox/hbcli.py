@@ -11,6 +11,11 @@ scope's exclude list is always passed to nmap as --exclude.
     hb flow 10.10.0.0/24 --profile robust  # discover -> scan live hosts -> report.md
     hb diff old.xml new.xml                # new/gone hosts and ports between two scans
     hb last                                # folder of the most recent scan
+    hb find                                # which networks is the box on? (nothing is sent)
+    hb find 10.20.0.0/24                   # who's up there (ARP sweep; asks first if not attached)
+    hb engage start 10.20.0.0/24 --name lab-a   # make it the engagement (12 h default)
+    hb engage                              # what's the engagement and how long is left
+    hb engage end                          # stop; lab scans are refused again
 
 Scans are written with -oA to ~/havok/scans/<time>_<profile>_<target>/ (override: HB_SCANS_DIR).
 """
@@ -59,7 +64,11 @@ def load_scope(path: str):
     from .scope import load_scope as _load
     if not os.path.exists(path):
         raise ScopeError(f"no scope file at {path} - copy config/scope.example.yaml and edit it")
-    return _load(path)
+    return _load(path, engagement_path=engagement_path())
+
+
+def engagement_path() -> str:
+    return os.environ.get("HB_ENGAGEMENT", "/data/havokbox/engagement.json")
 
 
 def check_targets(scope, targets: list[str]) -> list[str]:
@@ -73,7 +82,7 @@ def check_targets(scope, targets: list[str]) -> list[str]:
         ok = scope.ip_in_scope(str(net.network_address)) if net.num_addresses == 1 \
             else scope.network_in_scope(str(net))
         if not ok:
-            raise ScopeError(f"{t} is out of scope (check networks.include/exclude in the scope file)")
+            raise ScopeError(f"{t} is out of scope (not in the engagement, or on the never list; see hb engage)")
         out.append(str(net) if net.num_addresses > 1 else str(net.network_address))
     if not out:
         raise ScopeError("no targets")
@@ -307,7 +316,101 @@ def do_scan(scope, profile: str, targets: list[str], ports: str | None, dry: boo
     cmd = pre + cmd[:1] + extra + cmd[1:]
     if not dry:
         (d / "command.txt").write_text(" ".join(cmd) + "\n")
+        eng = scope.engagement() if hasattr(scope, "engagement") else None
+        if eng:
+            (d / "engagement.txt").write_text(eng["name"] + "\n")
     return (runner or run_nmap)(cmd, dry), d, cmd
+
+
+# ---------------------------------------------------------------- engagements
+
+def _never(scope_path: str) -> list:
+    """The never list, read from the scope file without needing an engagement."""
+    scope = load_scope(scope_path)
+    return list(scope.exclude)
+
+
+def cmd_engage(a) -> int:
+    from . import engagement as E
+    path = engagement_path()
+    if a.action == "end":
+        print("engagement ended" if E.end(path) else "no engagement was running")
+        return 0
+    if a.action == "start":
+        if not a.networks:
+            raise ScopeError("give the lab range(s): hb engage start 10.20.0.0/24 --name lab-a")
+        eng = E.start(path, a.name, a.networks, _never(a.scope), hours=a.hours, by="hb")
+        print(f"engagement {eng['name']}: {', '.join(eng['networks'])} for {E.time_left(eng)}")
+        return 0
+    eng = E.read(path)
+    if not eng:
+        print("no engagement. find the lab with 'hb find', then 'hb engage start <cidr>'")
+        return 1
+    print(f"engagement {eng['name']}: {', '.join(eng['networks'])} — {E.time_left(eng)} left")
+    return 0
+
+
+def _ip_json(argv: list[str]) -> str:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return "[]"
+
+
+def cmd_find(a, runner=None, ask=input, interactive: bool | None = None) -> int:
+    from .engagement import EngagementError, validate_networks
+    from .tools import net
+    never = _never(a.scope)
+    addrs = net.parse_addrs(_ip_json(["ip", "-j", "-4", "addr"]))
+    if not a.network:
+        rows = net.candidates(addrs, never)
+        if not rows:
+            print("the box isn't on any network right now")
+            return 1
+        for r in rows:
+            note = "usable" if r["usable"] else f"can't use: {r['why_not']}"
+            print(f"{r['network']:<18} on {r['iface']:<8} box is {r['box_ip']:<15} {note}")
+        print("\nnext: hb find <network>   then   hb engage start <network> --name <lab>")
+        return 0
+    try:
+        netw = validate_networks([a.network], never)[0]
+    except EngagementError as e:
+        raise ScopeError(str(e))
+    target = ipaddress.ip_network(netw)
+    hit = next((x for x in addrs if target.subnet_of(ipaddress.ip_network(x["network"]))), None)
+    overlaps_never = any(target.overlaps(n) for n in never if n.version == target.version)
+    if hit and not overlaps_never:   # arp-scan can't skip addresses, so never-list overlap -> nmap
+        cmd = ["arp-scan", "--interface", hit["iface"], "--retry", "2", "--plain", netw]
+        if os.geteuid() != 0:
+            cmd = ["sudo"] + cmd
+    else:
+        if not hit and not (sys.stdin.isatty() if interactive is None else interactive):
+            raise ScopeError(f"{netw} isn't attached to the box; run this yourself to confirm the sweep")
+        if not hit and ask(f"{netw} isn't attached to the box. Ping-sweep it (no ports)? type yes: ").strip() != "yes":
+            print("cancelled")
+            return 1
+        cmd = ["nmap", "-sn", "-n"]
+        if never:
+            cmd += ["--exclude", ",".join(str(n) for n in never)]
+        cmd += [netw]
+    print("+ " + " ".join(cmd), file=sys.stderr)
+    if a.dry_run:
+        return 0
+    if runner is not None:
+        return runner(cmd)
+    if not shutil.which(cmd[1] if cmd[0] == "sudo" else cmd[0]):
+        print(f"{cmd[1] if cmd[0] == 'sudo' else cmd[0]} is not installed", file=sys.stderr)
+        return 127
+    out = subprocess.run(cmd, capture_output=True, text=True).stdout
+    if cmd[-1] == netw and "arp-scan" in cmd:
+        hosts = [h for h in net.parse_arp_scan(out)
+                 if not any(ipaddress.ip_address(h["ip"]) in n for n in never)]
+        for h in hosts:
+            print(f"{h['ip']:<16} {h['mac']}  {h['vendor'] or ''}")
+        print(f"{len(hosts)} host(s) up on {netw}", file=sys.stderr)
+    else:
+        print(out, end="")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -342,11 +445,19 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("last", help="print the folder of the most recent scan")
     sub.add_parser("profiles", help="describe the scan profiles")
     sub.add_parser("hw", help="check every board: plugged in? software answering?")
+    e = sub.add_parser("engage", help="show, start or end the engagement (the lab ranges in scope)")
+    e.add_argument("action", nargs="?", default="status", choices=["status", "start", "end"])
+    e.add_argument("networks", nargs="*")
+    e.add_argument("--name", default="lab")
+    e.add_argument("--hours", type=float, default=12)
+    fd = sub.add_parser("find", help="which networks is the box on? / who's up on one (no ports)")
+    fd.add_argument("network", nargs="?")
+    fd.add_argument("-n", "--dry-run", action="store_true")
     sub.add_parser("menu", help="numbered menus in the terminal (also what plain 'hb' does)")
     sub.add_parser("gui", help="point-and-click windows on the Kali desktop")
 
     argv = sys.argv[1:] if argv is None else argv
-    subs = {"scan", "flow", "hosts", "ports", "diff", "last", "profiles", "menu", "gui", "hw"}
+    subs = {"scan", "flow", "hosts", "ports", "diff", "last", "profiles", "menu", "gui", "hw", "engage", "find"}
     if not subs & set(argv) and not {"-h", "--help"} & set(argv):
         argv = [*argv, "menu"]  # plain 'hb' opens the menus
     a = ap.parse_args(argv)
@@ -362,6 +473,10 @@ def main(argv: list[str] | None = None) -> int:
             from . import hwcheck
             print(hwcheck.render(hwcheck.check(missing_tools=hwcheck.missing_from_registry())))
             return 0
+        if a.cmd == "engage":
+            return cmd_engage(a)
+        if a.cmd == "find":
+            return cmd_find(a)
         if a.cmd == "last":
             print(latest_xml().parent)
             return 0

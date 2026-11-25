@@ -101,6 +101,9 @@ def validate_params(spec: ToolSpec, target: dict) -> tuple[bool, str]:
             elif kind == "choice":
                 if value not in meta.get("choices", ()):
                     return False, f"{name}: must be one of {list(meta.get('choices', ()))}"
+            elif kind == "bool":
+                if not isinstance(value, bool):
+                    return False, f"{name}: must be true or false"
             elif kind == "str":
                 if not isinstance(value, str):
                     return False, f"{name}: not a string"

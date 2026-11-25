@@ -9,7 +9,10 @@
       "Bash(hb ports *)",
       "Bash(hb diff *)",
       "Bash(havokbox-net status)",
-      "Bash(python3 -m pytest *)"
+      "Bash(python3 -m pytest *)",
+      "Bash(hb engage)",
+      "Bash(hb engage status)",
+      "Bash(hb find)"
     ],
     "ask": [
       "Bash(hb scan *)",
@@ -17,7 +20,9 @@
       "Bash(sudo *)",
       "Bash(nmap *)",
       "Bash(systemctl *)",
-      "Bash(nmcli *)"
+      "Bash(nmcli *)",
+      "Bash(hb find *)",
+      "Bash(arp-scan *)"
     ],
     "deny": [
       "Bash(rfcat *)",
@@ -29,7 +34,13 @@
       "Edit(/config/scope.yaml)",
       "Edit(/config/box.json)",
       "Read(//etc/havokbox/**)",
-      "Read(//data/havokbox/secrets/**)"
+      "Read(//data/havokbox/secrets/**)",
+      "Bash(hb engage start*)",
+      "Bash(hb engage end*)",
+      "Edit(//data/havokbox/engagement.json)",
+      "Write(//data/havokbox/engagement.json)",
+      "Bash(*engagement.json*)",
+      "Write(/config/scope.yaml)"
     ]
   }
 }

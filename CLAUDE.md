@@ -8,8 +8,11 @@ owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone das
 
 ## Ground rules (apply to every session, on the box or in the repo)
 
-- **Lab only.** Targets are only what `config/scope.yaml` lists. Never scan, probe or transmit at
-  anything else, and don't widen the scope file. Ask the owner, who edits it by hand.
+- **Lab only.** Targets are only the active engagement's ranges (`hb engage` shows them; they
+  expire after 12 h by default), and never anything on the never list (`networks.exclude` in
+  `config/scope.yaml`). Never scan, probe or transmit at anything else. Don't start, extend or end
+  an engagement and don't edit the scope file: the owner does that (`hb engage start`, dashboard).
+  `hb find` (which networks is the box on) is fine; sweeping a range with `hb find <cidr>` asks first.
 - **Standard tools only.** Orchestrate installed Kali tools. Don't write exploits, payloads or
   malware, and don't automate exploitation.
 - **Use the gated paths.** For network scans, prefer `hb` (it checks scope and skips excludes)
@@ -26,6 +29,7 @@ owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone das
 
 ## Useful commands on the box
 
+- `hb engage`: the current engagement and time left. `hb find`: networks the box is on.
 - `hb`: menus. `hb hw`: is every board working? `hb profiles`, `hb scan <ip/cidr> -p quiet|standard|robust`,
   `hb hosts [--port N]`, `hb ports`, `hb flow <cidr>`, `hb diff old.xml new.xml`.
   Scans are saved in `/data/havokbox/scans/`.

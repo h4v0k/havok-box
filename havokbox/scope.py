@@ -10,10 +10,15 @@ itself works on a plain dict, so it is testable without YAML.
 from __future__ import annotations
 
 import ipaddress
+import time
 from dataclasses import dataclass
 
 PASSIVE = "recon.passive"
 DISCOVERY = "recon.discovery"
+# Finding the lab before an engagement exists: host discovery only (ARP / ping, no ports) on a
+# PRIVATE range no bigger than a /16 that isn't on the never list (networks.exclude). The box's own
+# connected subnets are auto-allowed (the tool re-checks the claim); a typed range needs approval.
+LOCAL = "recon.local"
 NETWORK_CATEGORIES = {"recon.active", "auth.attempt", "exploit.tool"}
 # wifi.capture: listening for one AP's handshake/PMKID. Passive on air, but it collects auth
 # material, so it is bound to an in-scope BSSID and needs approval like the active ones.
@@ -25,7 +30,7 @@ RF_TX_CATEGORIES = {"rf.replay", "rf.transmit"}
 # is bound to the owner's own wifi.ssids. Both need approval and are refused during wardrive/sentry.
 POISON = "net.poison"
 ROGUE_AP = "wifi.rogue_ap"
-KNOWN = ({PASSIVE, DISCOVERY} | NETWORK_CATEGORIES | WIFI_CATEGORIES | BLE_CATEGORIES
+KNOWN = ({PASSIVE, DISCOVERY, LOCAL} | NETWORK_CATEGORIES | WIFI_CATEGORIES | BLE_CATEGORIES
          | RF_TX_CATEGORIES | {POISON, ROGUE_AP})
 
 
@@ -37,10 +42,12 @@ class Decision:
 
 
 class Scope:
-    def __init__(self, data: dict):
-        self.name = str(data.get("name") or "")
+    def __init__(self, data: dict, engagement_path: str | None = None, clock=time.time):
+        self._base_name = str(data.get("name") or "")
         nets = data.get("networks") or {}
-        self.include = [ipaddress.ip_network(c, strict=False) for c in nets.get("include", [])]
+        self._base_include = [ipaddress.ip_network(c, strict=False) for c in nets.get("include", [])]
+        self.engagement_path = engagement_path
+        self._clock = clock
         self.exclude = [ipaddress.ip_network(c, strict=False) for c in nets.get("exclude", [])]
         wifi = data.get("wifi") or {}
         self.bssids = {b.lower() for b in (wifi.get("bssids") or [])}
@@ -57,6 +64,31 @@ class Scope:
         self.domains = {d.lower() for d in (data.get("domains") or [])}
         self.auto_allow = set(data.get("auto_allow") or [])
         self.approval_required = set(data.get("approval_required") or [])
+
+    # ---- engagement (time-boxed lab scope; see havokbox/engagement.py) ----
+    def engagement(self) -> dict | None:
+        from .engagement import read
+        return read(self.engagement_path, self._clock)
+
+    def _engagement_networks(self) -> list:
+        eng = self.engagement()
+        if not eng:
+            return []
+        from .engagement import EngagementError, validate_networks
+        try:   # re-check on every read: a hand-edited file can't smuggle in a public or never range
+            nets = validate_networks(eng.get("networks") or [], self.exclude, bool(eng.get("allow_public")))
+        except EngagementError:
+            return []
+        return [ipaddress.ip_network(n) for n in nets]
+
+    @property
+    def include(self) -> list:
+        return self._base_include + self._engagement_networks()
+
+    @property
+    def name(self) -> str:
+        eng = self.engagement()
+        return str(eng["name"]) if eng else self._base_name
 
     def ip_in_scope(self, ip: str) -> bool:
         try:
@@ -120,15 +152,18 @@ class Gate:
         if category == DISCOVERY:
             net = (task.get("target") or {}).get("network")
             if not net or not self.scope.network_in_scope(net):
-                return Decision(False, False, f"network {net!r} not within networks.include (or excluded)")
+                return Decision(False, False, f"network {net!r} not in the engagement (or on the never list)")
             if DISCOVERY in self.scope.auto_allow:
                 return Decision(True, False, f"host discovery on in-scope {net}, auto-allowed")
             return self._approval(DISCOVERY, f"host discovery on {net}")
 
+        if category == LOCAL:
+            return self._local(target)
+
         if category in NETWORK_CATEGORIES:
             ip = target.get("ip")
             if not ip or not self.scope.ip_in_scope(ip):
-                return Decision(False, False, f"target ip {ip!r} not in networks.include (or excluded)")
+                return Decision(False, False, f"target ip {ip!r} not in the engagement (or on the never list)")
             return self._approval(category, f"{category} on in-scope {ip}")
 
         if category in WIFI_CATEGORIES:
@@ -170,12 +205,28 @@ class Gate:
 
         return Decision(False, False, "unhandled category")  # unreachable; fail-closed
 
+    def _local(self, target: dict) -> Decision:
+        net_s = target.get("network")
+        try:
+            net = ipaddress.ip_network(str(net_s), strict=False)
+        except ValueError:
+            return Decision(False, False, f"network {net_s!r} is not a CIDR range")
+        if not net.is_private or net.is_loopback or net.is_link_local:
+            return Decision(False, False, f"{net} is not a private range; lab discovery is private-only")
+        if net.prefixlen < (16 if net.version == 4 else 48):
+            return Decision(False, False, f"{net} is larger than a /16")
+        if any(net.subnet_of(ex) for ex in self.scope.exclude if ex.version == net.version):
+            return Decision(False, False, f"{net} is on the never-touch list (networks.exclude)")
+        if target.get("connected") is True:
+            return Decision(True, False, f"host discovery on the box's own subnet {net}")
+        return self._approval(LOCAL, f"host discovery (no ports) on {net}")
+
     def _approval(self, category: str, why: str) -> Decision:
         # Active categories are allowed to proceed only to the approval step.
         return Decision(True, True, f"in scope, needs approval: {why}")
 
 
-def load_scope(path: str = "config/scope.yaml") -> Scope:
+def load_scope(path: str = "config/scope.yaml", engagement_path: str | None = None) -> Scope:
     """Read the scope file. A missing or empty file is an error, never an empty-but-valid scope."""
     import yaml  # runtime dep on the Pi
 
@@ -183,4 +234,4 @@ def load_scope(path: str = "config/scope.yaml") -> Scope:
         data = yaml.safe_load(fh)
     if not isinstance(data, dict) or not data:
         raise ValueError(f"scope file {path} is empty or not a mapping")
-    return Scope(data)
+    return Scope(data, engagement_path=engagement_path)
