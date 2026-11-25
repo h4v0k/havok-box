@@ -99,5 +99,5 @@ def test_alfa_ach_is_recognized():
     rows = hwcheck.check(run=fake_run({("lsusb",): (0, ls)}), which=lambda b: None, exists=lambda p: False,
                          wifi_iface=lambda: None, missing_tools=[])
     alfa = [r for r in rows if r["board"].startswith("Alfa")][0]
-    assert alfa["board"] == "Alfa Wi-Fi (AWUS036ACH)" and alfa["status"] == "warn"
+    assert alfa["board"] == "Alfa Wi-Fi (AWUS036ACH)" and alfa["status"] == hwcheck.WARN
     assert "rtl88xxau" in alfa["fix"]
