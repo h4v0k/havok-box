@@ -206,3 +206,13 @@ def test_dashboard_engagement_endpoints(tmp_path):
     assert h.api.scope.ip_in_scope("10.20.0.9")
     assert h.engagement_end()[1]["ended"] is True
     assert not h.api.scope.ip_in_scope("10.20.0.9")
+
+
+def test_scope_yaml_slips_get_plain_errors():
+    assert Scope({"networks": {"include": [], "exclude": None}}).exclude == []
+    with pytest.raises(ValueError, match="stray entry"):
+        Scope({"networks": {"include": [[]], "exclude": []}})
+    with pytest.raises(ValueError, match="isn't an IP range"):
+        Scope({"networks": {"exclude": ["home"]}})
+    with pytest.raises(ValueError, match="must be a list"):
+        Scope({"networks": {"exclude": "192.168.1.0/24"}})

@@ -41,14 +41,35 @@ class Decision:
     reason: str
 
 
+def _net_list(nets: dict, key: str) -> list:
+    """networks.<key> as ip_networks, with a plain-English error for the usual YAML slips."""
+    raw = nets.get(key)
+    if raw is None:            # `exclude:` with nothing under it
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"networks.{key} must be a list: one '- 10.0.0.0/24' line per range, or []")
+    out = []
+    for c in raw:
+        if isinstance(c, (list, dict)) or c in (None, ""):
+            raise ValueError(f"networks.{key} has a stray entry {c!r}: write 'networks.{key}: []' "
+                             "on one line, or list ranges as '- 10.0.0.0/24'")
+        try:
+            out.append(ipaddress.ip_network(str(c).strip(), strict=False))
+        except ValueError:
+            raise ValueError(f"networks.{key}: {c!r} isn't an IP range (use CIDR, e.g. 192.168.1.0/24)")
+    return out
+
+
 class Scope:
     def __init__(self, data: dict, engagement_path: str | None = None, clock=time.time):
         self._base_name = str(data.get("name") or "")
         nets = data.get("networks") or {}
-        self._base_include = [ipaddress.ip_network(c, strict=False) for c in nets.get("include", [])]
+        if not isinstance(nets, dict):
+            raise ValueError("'networks:' must contain include: and exclude: (indented under it)")
+        self._base_include = _net_list(nets, "include")
         self.engagement_path = engagement_path
         self._clock = clock
-        self.exclude = [ipaddress.ip_network(c, strict=False) for c in nets.get("exclude", [])]
+        self.exclude = _net_list(nets, "exclude")
         wifi = data.get("wifi") or {}
         self.bssids = {b.lower() for b in (wifi.get("bssids") or [])}
         self.ssids = set(wifi.get("ssids") or [])
