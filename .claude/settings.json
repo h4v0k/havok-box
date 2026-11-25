@@ -40,7 +40,12 @@
       "Edit(//data/havokbox/engagement.json)",
       "Write(//data/havokbox/engagement.json)",
       "Bash(*engagement.json*)",
-      "Write(/config/scope.yaml)"
+      "Write(/config/scope.yaml)",
+      "Edit(//data/havokbox/owned.json)",
+      "Write(//data/havokbox/owned.json)",
+      "Bash(*owned.json*)",
+      "Bash(*/api/mine*)",
+      "Bash(*/api/engagement/*)"
     ]
   }
 }

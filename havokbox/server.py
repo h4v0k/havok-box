@@ -624,6 +624,49 @@ class Handlers:
         return 200, {"status": "active", "engagement": eng, "time_left": E.time_left(eng),
                      "never": never}
 
+    # ---- "mine": things marked as yours on the dashboard (no scope-file editing) ---------
+    def owned_state(self) -> tuple[int, dict]:
+        sc = self.api.scope
+        o = sc.owned()
+        return 200, {
+            "status": "ok",
+            "never": [str(n) for n in sc.exclude],
+            "never_from_file": o.get("never") is None,
+            "ssids": sorted(sc.ssids), "bssids": sorted(sc.bssids), "ble": sorted(sc.ble),
+            "subghz": sorted(sc.subghz),
+            "tx_bands": [{"min_mhz": lo, "max_mhz": hi} for lo, hi in sc.tx_bands],
+            # Only these came from the dashboard and can be removed there (the rest are in the file).
+            "removable": {"ssids": o.get("ssids") or [], "bssids": o.get("bssids") or [],
+                          "ble": o.get("ble") or [], "subghz": o.get("subghz") or [],
+                          "tx_bands": o.get("tx_bands") or []},
+        }
+
+    def _owned_change(self, body, op: str) -> tuple[int, dict]:
+        from . import owned as O
+        sc = self.api.scope
+        path = getattr(sc, "owned_path", None)
+        if not path:
+            return 503, {"status": "error", "reason": "owned file not configured"}
+        b = body or {}
+        kind = self._str(b, "kind", 16)
+        value = b.get("value")
+        if kind not in O.KINDS:
+            return 400, {"status": "error", "reason": "kind must be one of " + ", ".join(O.KINDS)}
+        try:
+            fn = O.add if op == "add" else O.remove
+            fn(path, kind, value, file_never=sc.file_exclude)
+        except O.OwnedError as exc:
+            return 400, {"status": "error", "reason": str(exc)}
+        shown = value if not isinstance(value, dict) else ", ".join(f"{k}={v}" for k, v in value.items())
+        self.api.store.log("mine", f"{op} {kind}: {str(shown)[:80]}")
+        return self.owned_state()
+
+    def owned_add(self, body) -> tuple[int, dict]:
+        return self._owned_change(body, "add")
+
+    def owned_remove(self, body) -> tuple[int, dict]:
+        return self._owned_change(body, "remove")
+
     def engagement_networks(self) -> tuple[int, dict]:
         """Which networks is the box on right now? Read-only (`ip -j -4 addr`), nothing is sent."""
         from .tools import net
@@ -983,6 +1026,17 @@ def create_app(handlers: Handlers | None = None):
     async def eng_nets(request):
         return reply(await run_in_threadpool(h.engagement_networks))
 
+    async def mine_get(request):
+        return reply(h.owned_state())
+
+    async def mine_add(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.owned_add, b))
+
+    async def mine_remove(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.owned_remove, b))
+
     async def eng_end(request):
         return reply(await run_in_threadpool(h.engagement_end))
 
@@ -1003,6 +1057,9 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/console", get_console),
         Route("/api/desktop", get_desktop),
         Route("/api/hardware", get_hardware),
+        Route("/api/mine", mine_get),
+        Route("/api/mine/add", mine_add, methods=["POST"]),
+        Route("/api/mine/remove", mine_remove, methods=["POST"]),
         Route("/api/engagement", eng_get),
         Route("/api/engagement/networks", eng_nets),
         Route("/api/engagement/start", eng_start, methods=["POST"]),

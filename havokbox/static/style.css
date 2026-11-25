@@ -115,3 +115,10 @@ select.text { appearance: none; }
 .hw-ok { border-left-color: #2e8b57; }
 .hw-check { border-left-color: #d49a00; }
 .hw-missing { border-left-color: var(--danger, #c0392b); }
+
+/* Mine tab and inline result buttons: still big enough to tap */
+.btn.inline { min-height: 44px; padding: 0.4em 0.9em; margin-left: 0.6em; font-size: 1rem; }
+.mine-list { list-style: none; padding: 0; margin: 0.5em 0; }
+.mine-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5em; padding: 0.4em 0;
+  border-bottom: 1px solid var(--line, #2a3340); overflow-wrap: anywhere; }
+.mine-list li span { flex: 1 1 12em; }

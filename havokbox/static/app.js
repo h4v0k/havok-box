@@ -111,7 +111,16 @@ function findingDetails(f) {
     for (const ap of d.aps || []) items.push(el("li", {
       class: twins.has(ap.bssid) ? "alert" : null,
       text: `${ap.ssid || "(hidden)"} — ${ap.bssid} ch ${ap.channel ?? "?"}${twins.has(ap.bssid) ? "  EVIL TWIN" : ""}`,
-    }));
+    }, mineButton(isMine("bssids", ap.bssid), () => markMine([["bssid", ap.bssid], ...(ap.ssid ? [["ssid", ap.ssid]] : [])]))));
+  }
+  if (f.kind === "ble_devices") for (const dv of d.devices || []) if (dv.addr) items.push(el("li", {
+    text: `${dv.name || "(no name)"} — ${dv.addr}${dv.rssi != null ? "  " + dv.rssi + " dBm" : ""}`,
+  }, mineButton(isMine("ble", dv.addr), () => markMine([["ble", dv.addr]]))));
+  if (f.kind === "subghz") {
+    for (const c of d.captures || []) items.push(el("li", { text: `capture ${c.id} at ${c.freq_mhz} MHz` },
+      mineButton(isMine("subghz", c.id), () => markMine([["subghz", c.id], ["tx_band", { mhz: c.freq_mhz, label: c.id }]])),
+      isMine("subghz", c.id) ? actionButton("Replay", () => queueReplay(c)) : null));
+    for (const r of d.received || []) items.push(el("li", { text: fmtItem(r) }));
   }
   if (f.kind === "radio_bands") for (const b of d.bands || []) for (const a of b.active || [])
     items.push(el("li", { text: `${a.mhz.toFixed(4)} MHz  ${a.label || b.band}  (+${a.above_floor_db} dB)` }));
@@ -299,6 +308,107 @@ $("#hw-check") && $("#hw-check").addEventListener("click", async () => {
   } catch (e) { $("#hw-rows").replaceChildren(el("p", { class: "warn", text: e.message })); }
   btn.disabled = false;
 });
+// ---- "Mine": mark scan results as yours, no scope-file editing ---------------------
+let mine = null;
+function isMine(list, v) {
+  return !!(mine && v && (mine[list] || []).map((x) => String(x).toLowerCase()).includes(String(v).toLowerCase()));
+}
+function actionButton(text, fn, cls = "btn") {
+  const b = el("button", { type: "button", class: cls + " inline", text });
+  b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); fn(b); });
+  return b;
+}
+function mineButton(already, fn) {
+  return already ? el("span", { class: "tag", text: "Mine" }) : actionButton("Mine", fn);
+}
+async function mineCall(path, kind, value) {
+  const r = await call("POST", path, { kind, value });
+  if (r.status !== "ok") throw new Error(r.reason || r.status);
+  mine = r; return r;
+}
+async function markMine(pairs) {
+  try {
+    for (const [kind, value] of pairs) await mineCall("/api/mine/add", kind, value);
+    toastMine("Added to Mine.");
+  } catch (e) { toastMine(e.message); }
+  renderMine(); render();
+}
+function toastMine(t) { if ($("#mine-msg")) $("#mine-msg").textContent = t; if ($("#status")) $("#status").textContent = t; }
+async function queueReplay(c) {
+  try {
+    const r = await call("POST", "/api/tool", { tool: "subghz.replay", target: { id: c.id, freq_mhz: c.freq_mhz } });
+    toastMine(r.status === "ok" ? `Replay of ${c.id} is ready: tap it under "Waiting for your approval".` : (r.reason || r.status));
+  } catch (e) { toastMine(e.message); }
+  refresh();
+}
+// Removing asks twice (second tap within 5 s) instead of a pop-up.
+function removeButton(kind, value, label) {
+  return actionButton("Remove", async (b) => {
+    if (!b.dataset.armed) {
+      b.dataset.armed = "1"; b.textContent = "Tap again to remove";
+      setTimeout(() => { delete b.dataset.armed; b.textContent = "Remove"; }, 5000);
+      return;
+    }
+    try { await mineCall("/api/mine/remove", kind, value); toastMine(`Removed ${label}.`); }
+    catch (e) { toastMine(e.message); }
+    renderMine(); render();
+  }, "btn danger");
+}
+function addRow(placeholder, kind, toValue, mode = "text") {
+  const inp = el("input", { class: "big", placeholder, autocomplete: "off", inputmode: mode });
+  const go = actionButton("Add", async () => {
+    const v = inp.value.trim(); if (!v) return;
+    try { await mineCall("/api/mine/add", kind, toValue(v)); inp.value = ""; toastMine("Added."); }
+    catch (e) { toastMine(e.message); }
+    renderMine(); render();
+  }, "btn primary");
+  return el("div", { class: "row" }, inp, go);
+}
+function mineList(items, kind, removable, fmt = (x) => x) {
+  if (!items.length) return el("p", { class: "empty", text: "Nothing yet." });
+  const rem = new Set((Array.isArray(removable) ? removable : []).map((x) => typeof x === "string" ? x.toLowerCase() : JSON.stringify(x)));
+  return el("ul", { class: "mine-list" }, items.map((x) => {
+    const key = typeof x === "string" ? x.toLowerCase() : null;
+    const canRemove = removable === true || (key !== null && rem.has(key));
+    return el("li", {}, el("span", { text: fmt(x) }),
+      canRemove ? removeButton(kind, x, fmt(x)) : el("small", { class: "hint", text: " (in scope file)" }));
+  }));
+}
+async function loadMine() {
+  try { mine = await call("GET", "/api/mine"); } catch (e) { mine = null; }
+  renderMine();
+}
+function renderMine() {
+  if (!$("#mine-never") || !mine) return;
+  $("#mine-never").replaceChildren(el("h3", { text: "Never touch" }),
+    el("p", { class: "hint", text: "Nothing on this list is ever scanned or swept, even inside an engagement." }),
+    mineList(mine.never, "never", true),
+    addRow("192.168.1.0/24", "never", (v) => v, "decimal"));
+  $("#mine-wifi").replaceChildren(el("h3", { text: "My Wi-Fi" }),
+    el("p", { class: "hint", text: "Network names" }),
+    mineList(mine.ssids, "ssid", mine.removable.ssids),
+    addRow("Network name (SSID)", "ssid", (v) => v),
+    el("p", { class: "hint", text: "Access points" }),
+    mineList(mine.bssids, "bssid", mine.removable.bssids),
+    addRow("AP MAC (BSSID) aa:bb:cc:dd:ee:ff", "bssid", (v) => v));
+  $("#mine-ble").replaceChildren(el("h3", { text: "My Bluetooth devices" }),
+    mineList(mine.ble, "ble", mine.removable.ble),
+    addRow("Device address aa:bb:cc:dd:ee:ff", "ble", (v) => v));
+  $("#mine-subghz").replaceChildren(el("h3", { text: "My remotes and receivers" }),
+    el("p", { class: "hint", text: "Run a sub-GHz scan, press the remote, then tap Mine on its capture. Replay appears once it's yours." }),
+    mineList(mine.subghz, "subghz", mine.removable.subghz));
+  const rb = mine.removable.tx_bands || [];
+  const isRem = (b) => rb.some((x) => x.min_mhz === b.min_mhz && x.max_mhz === b.max_mhz);
+  $("#mine-tx").replaceChildren(el("h3", { text: "Frequencies I may transmit on" }),
+    mine.tx_bands.length ? el("ul", { class: "mine-list" }, mine.tx_bands.map((b) => el("li", {},
+      el("span", { text: `${b.min_mhz}–${b.max_mhz} MHz` }),
+      isRem(b) ? removeButton("tx_band", { min_mhz: b.min_mhz, max_mhz: b.max_mhz }, `${b.min_mhz}–${b.max_mhz} MHz`)
+               : el("small", { class: "hint", text: " (in scope file)" }))))
+      : el("p", { class: "empty", text: "None yet." }),
+    addRow("Frequency in MHz, e.g. 390", "tx_band", (v) => ({ mhz: Number(v) }), "decimal"));
+}
+loadMine();
+
 // ---- engagement: find the lab, pick it, run inside it ----------------------------
 let eng = null;
 async function loadEngagement() {
@@ -348,7 +458,9 @@ $("#eng-find") && $("#eng-find").addEventListener("click", async () => {
         b1.addEventListener("click", () => findHosts(n.network, true));
         const b2 = el("button", { type: "button", class: "btn big primary", text: "Use as engagement" });
         b2.addEventListener("click", () => startEngagement([n.network]));
-        row.append(el("div", { class: "row" }, b1, b2));
+        const b3 = el("button", { type: "button", class: "btn big", text: "Never touch" });
+        b3.addEventListener("click", async () => { await markMine([["never", n.network]]); $("#eng-find").click(); });
+        row.append(el("div", { class: "row" }, b1, b2, b3));
       }
       return row;
     }) : [el("p", { class: "empty", text: "The box isn't on any network right now." })]));

@@ -10,6 +10,7 @@ itself works on a plain dict, so it is testable without YAML.
 from __future__ import annotations
 
 import ipaddress
+import os
 import time
 from dataclasses import dataclass
 
@@ -61,22 +62,26 @@ def _net_list(nets: dict, key: str) -> list:
 
 
 class Scope:
-    def __init__(self, data: dict, engagement_path: str | None = None, clock=time.time):
+    def __init__(self, data: dict, engagement_path: str | None = None, clock=time.time,
+                 owned_path: str | None = None):
         self._base_name = str(data.get("name") or "")
         nets = data.get("networks") or {}
         if not isinstance(nets, dict):
             raise ValueError("'networks:' must contain include: and exclude: (indented under it)")
         self._base_include = _net_list(nets, "include")
         self.engagement_path = engagement_path
+        if owned_path is None and engagement_path:
+            owned_path = os.path.join(os.path.dirname(engagement_path), "owned.json")
+        self.owned_path = owned_path
         self._clock = clock
-        self.exclude = _net_list(nets, "exclude")
+        self._file_exclude = _net_list(nets, "exclude")
         wifi = data.get("wifi") or {}
-        self.bssids = {b.lower() for b in (wifi.get("bssids") or [])}
-        self.ssids = set(wifi.get("ssids") or [])
+        self._file_bssids = {b.lower() for b in (wifi.get("bssids") or [])}
+        self._file_ssids = set(wifi.get("ssids") or [])
         rf = data.get("rf") or {}
-        self.ble = {a.lower() for a in (rf.get("ble_addresses") or [])}
-        self.subghz = {str(s).lower() for s in (rf.get("subghz_ids") or [])}
-        self.tx_bands = [
+        self._file_ble = {a.lower() for a in (rf.get("ble_addresses") or [])}
+        self._file_subghz = {str(s).lower() for s in (rf.get("subghz_ids") or [])}
+        self._file_tx_bands = [
             (float(b["min_mhz"]), float(b["max_mhz"])) for b in (rf.get("tx_bands") or [])
         ]
         # Isolated lab VLAN(s) for poisoning — deliberately separate from include (fail-closed if unset)
@@ -85,6 +90,50 @@ class Scope:
         self.domains = {d.lower() for d in (data.get("domains") or [])}
         self.auto_allow = set(data.get("auto_allow") or [])
         self.approval_required = set(data.get("approval_required") or [])
+
+    # ---- things marked "mine" on the dashboard (see havokbox/owned.py) ----
+    def owned(self) -> dict:
+        from .owned import read
+        return read(self.owned_path)
+
+    @property
+    def exclude(self) -> list:
+        from .owned import never
+        dash = never(self.owned())
+        return self._file_exclude if dash is None else dash
+
+    @exclude.setter
+    def exclude(self, value) -> None:
+        self._file_exclude = list(value)
+
+    @property
+    def file_exclude(self) -> list:
+        return list(self._file_exclude)
+
+    @property
+    def bssids(self) -> set:
+        from .owned import strings
+        return self._file_bssids | strings(self.owned(), "bssids")
+
+    @property
+    def ssids(self) -> set:
+        from .owned import strings
+        return self._file_ssids | strings(self.owned(), "ssids", lower=False)
+
+    @property
+    def ble(self) -> set:
+        from .owned import strings
+        return self._file_ble | strings(self.owned(), "ble")
+
+    @property
+    def subghz(self) -> set:
+        from .owned import strings
+        return self._file_subghz | strings(self.owned(), "subghz")
+
+    @property
+    def tx_bands(self) -> list:
+        from .owned import bands
+        return self._file_tx_bands + bands(self.owned())
 
     # ---- engagement (time-boxed lab scope; see havokbox/engagement.py) ----
     def engagement(self) -> dict | None:

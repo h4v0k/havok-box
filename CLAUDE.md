@@ -19,8 +19,11 @@ owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone das
   over raw `nmap`. Anything active (deauth, replay/transmit, poisoning, credential attempts) goes
   through the dashboard, where it needs the owner's per-action approval. Don't start those from a
   shell.
-- **Receive is fine, transmit isn't.** The SDRs only listen. Never run Yard Stick/rfcat transmit,
-  aireplay-ng, mdk4 or similar from here. The one exception is the Meshtastic bridge, which messages
+- **Receive is fine, transmit isn't (from here).** The SDRs only listen. Yard Stick replay exists,
+  but only from the dashboard, for remotes the owner marked as his on the **Mine** tab, on a
+  frequency listed there, with his approval each time. Never run rfcat transmit, aireplay-ng, mdk4
+  or similar from a shell, and don't add or remove anything on the Mine tab or in
+  `/data/havokbox/owned.json`. The one exception is the Meshtastic bridge, which messages
   the owner's own node. Keep its replies report-only.
 - **Don't touch secrets.** Leave `/etc/havokbox/`, `/data/havokbox/secrets/`, `config/box.json` and
   the dashboard token alone.
