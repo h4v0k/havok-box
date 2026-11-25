@@ -40,6 +40,15 @@ def gps_fix(gpspipe_text: str) -> str | None:
     return {3: "3D", 2: "2D"}.get(best)
 
 
+# USB id -> (model, what to do if no interface comes up)
+ALFA_MODELS = {
+    "0e8d:7612": ("AWUS036ACM", "replug it; check 'dmesg | tail' for mt76x2u errors"),
+    "0bda:8812": ("AWUS036ACH", "needs the rtl88xxau driver: sudo apt install realtek-rtl88xxau-dkms, then reboot"),
+    "0bda:8813": ("AWUS1900", "needs the 8814au driver: sudo apt install realtek-rtl8814au-dkms, then reboot"),
+    "0e8d:7961": ("AWUS036AXML", "replug it; check 'dmesg | tail' for mt7921u errors"),
+}
+
+
 def wifi_monitor_iface(sys_net: str = "/sys/class/net", builtin: str = "wlan0") -> str | None:
     """A USB Wi-Fi interface other than the built-in one (the Alfa)."""
     try:
@@ -65,14 +74,16 @@ def check(run=_run, which=shutil.which, exists=os.path.exists, wifi_iface=wifi_m
     if rc != 0:
         row("USB", WARN, "couldn't list USB devices", "sudo apt install usbutils")
 
-    # Alfa AWUS036ACM (MediaTek MT7612U)
-    if "0e8d:7612" in ids:
+    # Alfa: whichever supported model is plugged in
+    alfa = next(((usb, m) for usb, m in ALFA_MODELS.items() if usb in ids), None)
+    if alfa:
+        _, (model, driver_fix) = alfa
         iface = wifi_iface()
-        row("Alfa Wi-Fi (AWUS036ACM)", OK if iface else WARN,
+        row(f"Alfa Wi-Fi ({model})", OK if iface else WARN,
             f"plugged in, interface {iface}" if iface else "plugged in, but no interface came up",
-            "" if iface else "replug it; check 'dmesg | tail' for mt76x2u errors")
+            "" if iface else driver_fix)
     else:
-        row("Alfa Wi-Fi (AWUS036ACM)", MISSING, "not detected", "plug it into the hub")
+        row("Alfa Wi-Fi", MISSING, "not detected", "plug it into the hub")
 
     # RTL-SDR Blog V4 dongle(s): main + optional second for ADS-B
     n_sdr = len(re.findall(r"\bID 0bda:2838\b", ls, re.I)) if rc == 0 else 0

@@ -92,3 +92,12 @@ def test_two_sdrs_need_distinct_serials():
     b = by_board(hwcheck.check(run=run, which=lambda b: "/x", exists=lambda p: False, wifi_iface=lambda: None))
     assert "(main)" in b["RTL-SDR V4 #1"]["detail"] and "(aircraft)" in b["RTL-SDR V4 #2"]["detail"]
     assert "RTL-SDR pair" not in b
+
+
+def test_alfa_ach_is_recognized():
+    ls = "Bus 003 Device 110: ID 0bda:8812 Realtek Semiconductor Corp. RTL8812AU 802.11a/b/g/n/ac 2T2R DB WLAN Adapter\n"
+    rows = hwcheck.check(run=fake_run({("lsusb",): (0, ls)}), which=lambda b: None, exists=lambda p: False,
+                         wifi_iface=lambda: None, missing_tools=[])
+    alfa = [r for r in rows if r["board"].startswith("Alfa")][0]
+    assert alfa["board"] == "Alfa Wi-Fi (AWUS036ACH)" and alfa["status"] == "warn"
+    assert "rtl88xxau" in alfa["fix"]

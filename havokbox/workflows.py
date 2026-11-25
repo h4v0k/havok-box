@@ -17,7 +17,7 @@ SPACES = [
     {
         "id": "wifi",
         "label": "Wi-Fi",
-        "radio": "Alfa AWUS036ACM, Marauder board",
+        "radio": "Alfa AWUS036ACH, Marauder board",
         "discover": [
             {"id": "wifi.scan", "label": "Scan Wi-Fi", "tool": "kismet", "category": "recon.passive",
              "needs": None, "what": "List every access point and client in range, tagged with GPS."},
