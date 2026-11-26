@@ -94,3 +94,64 @@ def test_tool_wrappers():
     c = Ctx(json.dumps({"status": "refused", "reason": "x"}))
     assert yardstick.replay({"target": {"id": "ys_1", "freq_mhz": 433.92}}, c)["summary"] == "replay refused: x"
     assert yardstick.scan({"target": {}}, Ctx("garbage"))["summary"].startswith("Yard Stick error")
+
+
+class RssiRadio(FakeRadio):
+    def __init__(self, by_freq):
+        super().__init__()
+        self.by_freq, self.hz = by_freq, None
+
+    def setFreq(self, hz):
+        self.hz = hz
+        self.calls.append(("setFreq", (hz,), {}))
+
+    def getRSSI(self):
+        return bytes([self.by_freq.get(self.hz, 0)])
+
+
+def test_rssi_ranks_busy_frequencies_and_skips_out_of_band():
+    # raw 0x50 = 80 -> 80/2-74 = -34 dBm (busy); 0xC0 = -64 -> -106 dBm (quiet)
+    r = RssiRadio({433_920_000: 0x50, 315_000_000: 0xC0})
+    t = [0.0]
+    def clock():
+        t[0] += 0.1
+        return t[0]
+    out = ys.rssi(r, MODS, [315.0, 433.92, 600.0], 1, clock=clock, sleep=lambda s: None)
+    rows = out["busiest_first"]
+    assert out["skipped_out_of_band"] == [600.0]
+    assert [x["freq_mhz"] for x in rows] == [433.92, 315.0]
+    assert rows[0]["peak_dbm"] == -34.0 and rows[1]["avg_dbm"] == -106.0 and rows[0]["samples"] > 1
+    assert not any(c[0] in ("RFxmit", "setModeTX") for c in r.calls)
+    assert r.calls[-1][0] == "setModeIDLE"
+
+
+def test_rssi_conversion():
+    assert ys._rssi_dbm(b"\x00") == -74.0 and ys._rssi_dbm(0x50) == -34.0 and ys._rssi_dbm(0xC0) == -106.0
+
+
+def test_scan_with_fsk_and_baud_is_recorded(tmp_path):
+    r = FakeRadio([b"\x12\x34\x56\x78" * 4])
+    out = ys.scan(r, MODS, 915.0, 5, str(tmp_path), clock=clock_seq(10), mod="2FSK", drate=38400)
+    cid = out["received"][0]["id"]
+    saved = json.loads((tmp_path / "subghz" / f"{cid}.json").read_text())
+    assert saved["modulation"] == "2FSK" and saved["drate"] == 38400
+    assert ("setMdmModulation", (MODS["2FSK"],), {}) in r.calls
+
+
+def test_all_captures_walks_kit_folders(tmp_path):
+    for run in ("a", "b"):
+        ys.scan(FakeRadio([b"\x12\x34\x56\x78" * 4]), MODS, 433.92, 5, str(tmp_path / run), clock=clock_seq(10))
+    (tmp_path / "a" / "subghz" / "junk.json").write_text("nope")
+    caps = ys.all_captures(str(tmp_path))
+    assert len(caps) == 2 and all(c["bytes"] == 16 and c["freq_mhz"] == 433.92 for c in caps)
+
+
+def test_main_refuses_bad_band_and_baud(capsys, tmp_path):
+    ys.main(["scan", "--freq-mhz", "600", "--seconds", "5", "--work-dir", str(tmp_path)])
+    assert "outside" in json.loads(capsys.readouterr().out)["reason"]
+    ys.main(["scan", "--freq-mhz", "433.92", "--seconds", "5", "--work-dir", str(tmp_path), "--baud", "5"])
+    assert "baud" in json.loads(capsys.readouterr().out)["reason"]
+    ys.main(["rssi", "--freqs", "433.92,abc"])
+    assert "comma" in json.loads(capsys.readouterr().out)["reason"]
+    ys.main(["captures", "--dir", str(tmp_path)])
+    assert json.loads(capsys.readouterr().out)["captures"] == []

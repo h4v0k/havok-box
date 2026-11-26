@@ -950,14 +950,14 @@
    "name": "rtl_433 decode",
    "what": "Decode sensor transmissions in the ISM (license-free radio) bands to JSON.",
    "when": "Survey devices on 315, 433, 868 and 915 MHz.",
-   "cmd": "rtl_433 -f {freq}M -M time:iso -M level -T {seconds} -F json:{outdir}/rtl433.json",
+   "cmd": "rtl_433 -d {sdr} -f {freq}M -M time:iso -M level -T {seconds} -F json:{outdir}/rtl433.json",
    "needs": [
     "rtl_433"
    ],
    "risk": "passive",
    "root": false,
    "est": "as set",
-   "notes": "-f: centre frequency. -T: run time in seconds. -F json:file: save results as JSON.",
+   "notes": "-f: centre frequency. -T: run time in seconds. -F json:file: save results as JSON. -d: which dongle (0 = first).",
    "source": "https://github.com/merbanan/rtl_433"
   },
   {
@@ -966,14 +966,14 @@
    "name": "rtl_power sweep, 400 to 470 MHz",
    "what": "Sweep a wide frequency range and log signal power to a CSV file.",
    "when": "Find active frequencies in the UHF (ultra high frequency) band.",
-   "cmd": "rtl_power -f 400M:470M:25k -i 10 -e {seconds}s -g 40 {outdir}/rtl_power.csv",
+   "cmd": "rtl_power -d {sdr} -f 400M:470M:25k -i 10 -e {seconds}s -g 40 {outdir}/rtl_power.csv",
    "needs": [
     "rtl_power"
    ],
    "risk": "passive",
    "root": false,
    "est": "as set",
-   "notes": "-f lower:upper:step: the range and step size. -i: seconds to average each pass. -e: exit time. -g: receiver gain.",
+   "notes": "-f lower:upper:step: the range and step size. -i: seconds to average each pass. -e: exit time. -g: receiver gain. -d: which dongle (0 = first).",
    "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr"
   },
   {
@@ -998,14 +998,14 @@
    "name": "RTL-SDR health check",
    "what": "Confirm the SDR (software-defined radio) dongle is detected and stable.",
    "when": "Before a capture.",
-   "cmd": "timeout 10 rtl_test -t 2>&1 | tee {outdir}/rtl_test.txt",
+   "cmd": "timeout 10 rtl_test -d {sdr} -t 2>&1 | tee {outdir}/rtl_test.txt",
    "needs": [
     "rtl_test"
    ],
    "risk": "passive",
    "root": false,
    "est": "<10s",
-   "notes": "-t: test the tuner range and gains.",
+   "notes": "-t: test the tuner range and gains. -d: which dongle (0 = first).",
    "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr"
   },
   {
@@ -1361,28 +1361,12 @@
    "source": "https://github.com/atlas0fd00m/rfcat"
   },
   {
-   "id": "subghz-flipper-listen",
-   "category": "Sub-GHz remotes and sensors (receive only)",
-   "name": "Listen for remotes with the Flipper Zero",
-   "what": "Use the Flipper as a backup sub-GHz receiver over USB and record what it hears on one frequency.",
-   "when": "When the YARD Stick is busy or unplugged.",
-   "cmd": "hb-helper flipper scan --port {tty} --freq-mhz {freq} --seconds {seconds} | tee {outdir}/flipper.json",
-   "needs": [
-    "hb-helper"
-   ],
-   "risk": "passive",
-   "root": false,
-   "est": "as set",
-   "notes": "Close qFlipper and the Flipper's own sub-GHz app first. The Flipper usually shows up as /dev/ttyACM0.",
-   "source": "https://docs.flipper.net/development/cli"
-  },
-  {
    "id": "subghz-rtl433-auto",
    "category": "Sub-GHz remotes and sensors (receive only)",
    "name": "Decode sensors on 315, 433 and 915 MHz in turn",
    "what": "Hop the SDR between the three common license-free bands and decode weather stations, tire sensors, doorbells and alarms.",
    "when": "See which sensors are around, without picking a frequency.",
-   "cmd": "rtl_433 -f 315M -f 433.92M -f 915M -H 20 -M time:iso -M level -T {seconds} -F json:{outdir}/rtl433-hop.json",
+   "cmd": "rtl_433 -d {sdr} -f 315M -f 433.92M -f 915M -H 20 -M time:iso -M level -T {seconds} -F json:{outdir}/rtl433-hop.json",
    "needs": [
     "rtl_433"
    ],
@@ -1433,7 +1417,7 @@
    "name": "Listen to NOAA weather radio",
    "what": "Record a NOAA weather broadcast to a sound file you can play back.",
    "when": "Check the SDR and antenna with a strong, always-on signal.",
-   "cmd": "timeout {seconds} rtl_fm -f 162.55M -M fm -s 22050 -g 40 | sox -t raw -r 22050 -e signed -b 16 -c 1 - {outdir}/noaa.wav",
+   "cmd": "timeout {seconds} rtl_fm -d {sdr} -f 162.55M -M fm -s 22050 -g 40 | sox -t raw -r 22050 -e signed -b 16 -c 1 - {outdir}/noaa.wav",
    "needs": [
     "rtl_fm",
     "sox"
@@ -1699,6 +1683,300 @@
    "est": "until closed",
    "notes": "Plug the programming cable in first.",
    "source": "https://chirpmyradio.com/"
+  },
+  {
+   "id": "sdr-list",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Which SDR dongles are plugged in?",
+   "what": "List every RTL-SDR with its index and serial number, and read one dongle's settings.",
+   "when": "Before picking dongle 0 or 1, or after setting serials.",
+   "cmd": "(timeout 5 rtl_test -d 99 2>&1 | grep -E '^ *[0-9]+:|Found'; rtl_eeprom -d {sdr}) 2>&1 | tee {outdir}/sdr-list.txt",
+   "needs": [
+    "rtl_test",
+    "rtl_eeprom"
+   ],
+   "est": "<10s",
+   "notes": "Read only. The box's two dongles should show serials HBSDR1 and HBSDR2 (set once with scripts/sdr-serials.sh).",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-ppm",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Measure the dongle's frequency error",
+   "what": "Measure how far off the dongle's clock is, in PPM (parts per million), so tuning can be corrected.",
+   "when": "Decodes look shifted, or before narrow signals like pagers or GMRS.",
+   "cmd": "timeout --foreground $(( {seconds} + 5 )) rtl_test -d {sdr} -p{seconds} 2>&1 | tee {outdir}/ppm.txt",
+   "needs": [
+    "rtl_test"
+   ],
+   "est": "as set",
+   "notes": "Let it run 2-5 minutes; use the last 'cumulative PPM' value with -p in other tools. Dongles with a TCXO are usually within 1-2 PPM.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-power-range",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Sweep any frequency range",
+   "what": "Log signal power across a range you choose to a CSV file.",
+   "when": "Find what's active between two frequencies.",
+   "cmd": "rtl_power -d {sdr} -f {fmin}M:{fmax}M:10k -i 10 -e {seconds}s -g 40 {outdir}/sweep.csv",
+   "needs": [
+    "rtl_power"
+   ],
+   "est": "as set",
+   "notes": "10 kHz steps. Wide ranges take longer per pass. Turn the CSV into a picture with the 'Draw the last sweep' recipe.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-power-full",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Whole-range survey, 24 MHz to 1.7 GHz",
+   "what": "Coarse sweep of everything the dongle can hear, in 1 MHz steps.",
+   "when": "First look at an unfamiliar site.",
+   "cmd": "rtl_power -d {sdr} -f 24M:1700M:1M -i 30 -e {seconds}s -g 40 {outdir}/full-sweep.csv",
+   "needs": [
+    "rtl_power"
+   ],
+   "est": "as set",
+   "notes": "Give it 10 minutes or more. Busy areas are worth a finer 'Sweep any frequency range'.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-heatmap",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Draw the last sweep as a picture",
+   "what": "Turn the newest rtl_power CSV from the toolbox into a waterfall PNG and list the strongest frequencies.",
+   "when": "After a sweep.",
+   "cmd": "hb-helper sweep picture --dir ~/havok/kit --out {outdir}/sweep.png | tee {outdir}/sweep-peaks.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "est": "<30s",
+   "notes": "Open sweep.png on the desktop. Brighter means stronger.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-record-audio",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Record audio on one frequency",
+   "what": "Tune to a frequency, demodulate it and save the sound to a WAV file.",
+   "when": "Listen to a channel you found in a sweep. Use fm for two-way radios, am for aircraft, usb/lsb for ham sideband.",
+   "cmd": "timeout {seconds} rtl_fm -d {sdr} -f {freq}M -M {demod} -s 24000 -g 40 | sox -t raw -r 24000 -e signed -b 16 -c 1 - {outdir}/audio.wav",
+   "needs": [
+    "rtl_fm",
+    "sox"
+   ],
+   "est": "as set",
+   "notes": "For broadcast FM radio use the 'FM radio station' recipe instead (needs a wider setting).",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-fm-broadcast",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Record an FM radio station",
+   "what": "Record a broadcast FM station (88-108 MHz) to a WAV file.",
+   "when": "Quick check that the SDR and antenna work.",
+   "cmd": "timeout {seconds} rtl_fm -d {sdr} -f {freq}M -M wbfm -s 170k -r 32k -E deemp | sox -t raw -r 32000 -e signed -b 16 -c 1 - {outdir}/fm.wav",
+   "needs": [
+    "rtl_fm",
+    "sox"
+   ],
+   "est": "as set",
+   "notes": "Set the frequency to a local station, e.g. 102.5.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-airband",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Listen to aircraft voice (airband)",
+   "what": "Record AM aircraft voice on a tower or approach frequency.",
+   "when": "Near an airport; set the frequency to the tower or ATIS.",
+   "cmd": "timeout {seconds} rtl_fm -d {sdr} -f {freq}M -M am -s 12000 -l 30 -g 40 | sox -t raw -r 12000 -e signed -b 16 -c 1 - {outdir}/airband.wav",
+   "needs": [
+    "rtl_fm",
+    "sox"
+   ],
+   "est": "as set",
+   "notes": "Airband is 118-137 MHz. -l 30: squelch, so silence isn't recorded. Raise it if it records hiss.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-scan-gmrs",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Scan GMRS/FRS channels 1-7 and record activity",
+   "what": "Hop GMRS/FRS channels 1-7 and record only when someone's talking.",
+   "when": "Check for radio chatter at an event or site.",
+   "cmd": "timeout {seconds} rtl_fm -d {sdr} -M fm -f 462.5625M -f 462.5875M -f 462.6125M -f 462.6375M -f 462.6625M -f 462.6875M -f 462.7125M -s 12500 -l 60 -g 40 | sox -t raw -r 12500 -e signed -b 16 -c 1 - {outdir}/gmrs.wav",
+   "needs": [
+    "rtl_fm",
+    "sox"
+   ],
+   "est": "as set",
+   "notes": "-l 60: squelch; raise it if it stops on noise. The file only holds the moments with a signal.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-scan-marine",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Scan marine VHF (channels 16, 9, 13, 22A)",
+   "what": "Hop the main marine channels and record traffic, including Coast Guard on 16 and 22A.",
+   "when": "On or near the water (Tampa Bay).",
+   "cmd": "timeout {seconds} rtl_fm -d {sdr} -M fm -f 156.8M -f 156.45M -f 156.65M -f 157.1M -s 12500 -l 60 -g 40 | sox -t raw -r 12500 -e signed -b 16 -c 1 - {outdir}/marine.wav",
+   "needs": [
+    "rtl_fm",
+    "sox"
+   ],
+   "est": "as set",
+   "notes": "16: distress and calling. 9: boater calling. 13: bridge-to-bridge. 22A: Coast Guard.",
+   "source": "https://www.navcen.uscg.gov/",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-iq-record",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Record raw radio (IQ) for later analysis",
+   "what": "Save the raw radio samples around a frequency to a file you can open in URH, Gqrx or inspectrum.",
+   "when": "Capture a remote or sensor once and study it later.",
+   "cmd": "timeout {seconds} rtl_sdr -d {sdr} -f {freq}M -s 2048000 -g 40 {outdir}/capture-{freq}MHz-2048k.cu8",
+   "needs": [
+    "rtl_sdr"
+   ],
+   "est": "as set",
+   "notes": "About 4 MB per second, so keep it short (10-30 s). In URH: File > Open, sample rate 2.048M, unsigned 8-bit.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-rtl433-analyze",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Work out an unknown signal (rtl_433 analyzer)",
+   "what": "Have rtl_433 describe each signal it can't name: pulse widths, gaps and a guessed encoding.",
+   "when": "A remote or sensor that rtl_433 doesn't decode.",
+   "cmd": "rtl_433 -d {sdr} -f {freq}M -A -T {seconds} 2>&1 | tee {outdir}/rtl433-analyze.txt",
+   "needs": [
+    "rtl_433"
+   ],
+   "est": "as set",
+   "notes": "Press the button a few times while it runs. The 'Guessing modulation' lines suggest settings for the YARD Stick.",
+   "source": "https://github.com/merbanan/rtl_433",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-rtl433-meta",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Decode with signal details",
+   "what": "Decode sensors and also log each one's frequency offset, signal strength and noise.",
+   "when": "Compare how strong devices are, or pick the closest one.",
+   "cmd": "rtl_433 -d {sdr} -f {freq}M -M level -M noise -M protocol -M time:iso -T {seconds} -F json:{outdir}/rtl433-meta.json",
+   "needs": [
+    "rtl_433"
+   ],
+   "est": "as set",
+   "notes": "-M level: RSSI and SNR per message. -M protocol: which decoder matched.",
+   "source": "https://github.com/merbanan/rtl_433",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "sdr-share",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "Share the SDR with your laptop",
+   "what": "Serve the dongle over rtl_tcp on the box only, so SDR++ or Gqrx on your laptop can use it through SSH.",
+   "when": "You want a big screen for the waterfall.",
+   "cmd": "rtl_tcp -d {sdr} -a 127.0.0.1 -p 1234",
+   "needs": [
+    "rtl_tcp"
+   ],
+   "est": "until stopped",
+   "notes": "On the laptop: ssh -L 1234:127.0.0.1:1234 <box>, then add an rtl_tcp source at 127.0.0.1:1234. Bound to the box only, never the network. Ctrl+C stops it.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "ys-info",
+   "category": "Sub-GHz remotes and sensors (receive only)",
+   "name": "Is the YARD Stick working?",
+   "what": "Ask the YARD Stick One for its firmware build and chip, to confirm it's alive.",
+   "when": "Before a sub-GHz session, or after plugging it in.",
+   "cmd": "hb-helper yardstick info | tee {outdir}/yardstick-info.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "est": "<5s",
+   "notes": "An error means it isn't plugged in, another program is using it, or rfcat isn't installed.",
+   "source": "https://github.com/atlas0fd00m/rfcat",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "ys-rssi",
+   "category": "Sub-GHz remotes and sensors (receive only)",
+   "name": "Which frequencies are busy? (YARD Stick)",
+   "what": "Measure signal strength on each frequency you list and rank them, busiest first. Receive only.",
+   "when": "Find which frequency a remote uses: run this, press the remote, read the top line.",
+   "cmd": "hb-helper yardstick rssi --freqs {freqs} --seconds {seconds} | tee {outdir}/yardstick-rssi.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "est": "seconds x frequencies",
+   "notes": "Seconds is per frequency (5-10 is plenty). The YARD Stick covers 300-348, 391-464 and 782-928 MHz; others are skipped.",
+   "source": "https://github.com/atlas0fd00m/rfcat",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "ys-listen-custom",
+   "category": "Sub-GHz remotes and sensors (receive only)",
+   "name": "Listen with your own settings (YARD Stick)",
+   "what": "Record signals with a chosen modulation and data rate, for devices that aren't plain on/off keying.",
+   "when": "The analyzer or a datasheet says the device is FSK, or uses a different speed.",
+   "cmd": "hb-helper yardstick scan --freq-mhz {freq} --seconds {seconds} --mod {mod} --baud {baud} --work-dir {outdir} | tee {outdir}/yardstick-custom.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "est": "as set",
+   "notes": "ook: most fobs and doorbells. 2fsk/gfsk: many sensors, meters and newer remotes. Typical rates: 2400-10000 for remotes, 38400+ for data links.",
+   "source": "https://github.com/atlas0fd00m/rfcat",
+   "root": false,
+   "risk": "passive"
+  },
+  {
+   "id": "ys-captures",
+   "category": "Sub-GHz remotes and sensors (receive only)",
+   "name": "List saved remote captures",
+   "what": "Show every capture the YARD Stick saved in toolbox runs, newest first, with frequency and settings.",
+   "when": "Find a capture to look at, or to mark on the Known devices tab.",
+   "cmd": "hb-helper yardstick captures --dir ~/havok/kit | tee {outdir}/captures.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "est": "<5s",
+   "notes": "Reads files only. Replaying a capture is a dashboard step, for remotes on your Known devices list.",
+   "source": "https://github.com/atlas0fd00m/rfcat",
+   "root": false,
+   "risk": "passive"
   }
  ],
  "chains": [
@@ -1850,6 +2128,29 @@
     "wire-netdiscover-passive",
     "wire-broadcasts",
     "wire-p0f"
+   ]
+  },
+  {
+   "id": "chain-unknown-remote",
+   "name": "Identify an unknown remote",
+   "what": "Find its frequency with the YARD Stick, record it, then have rtl_433 describe the signal.",
+   "steps": [
+    "ys-info",
+    "ys-rssi",
+    "subghz-yardstick-listen",
+    "sdr-rtl433-analyze"
+   ]
+  },
+  {
+   "id": "chain-sdr-site-survey",
+   "name": "SDR site survey",
+   "what": "Check the dongle, sweep everything, draw it, then decode license-free sensors.",
+   "steps": [
+    "sdr-list",
+    "sdr-rtl-test",
+    "sdr-power-full",
+    "sdr-heatmap",
+    "subghz-rtl433-auto"
    ]
   }
  ]

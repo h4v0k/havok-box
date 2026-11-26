@@ -586,8 +586,8 @@ cat > /usr/local/bin/hb-helper <<EOF
 #!/usr/bin/env bash
 export PYTHONPATH="$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
 case "\$1 \$2" in
-  "yardstick scan"|"flipper scan"|"marauder scan"|"marauder stop"|"radio bands"|"radio aprs"|"meshbridge nodes") ;;
-  *) echo "hb-helper: '\$1 \$2' isn't available here (receive-only: yardstick scan, flipper scan, marauder scan, radio bands, radio aprs, meshbridge nodes)" >&2; exit 2 ;;
+  "yardstick scan"|"yardstick info"|"yardstick rssi"|"yardstick captures"|"marauder scan"|"marauder stop"|"radio bands"|"radio aprs"|"meshbridge nodes"|"sweep picture") ;;
+  *) echo "hb-helper: '\$1 \$2' isn't available here (receive-only: yardstick scan/info/rssi/captures, marauder scan, radio bands/aprs, meshbridge nodes, sweep picture)" >&2; exit 2 ;;
 esac
 mod="\$1"; shift
 exec "$VENV/bin/python" -m "havokbox.helpers.\$mod" "\$@"

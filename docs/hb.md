@@ -196,17 +196,30 @@ scp -r "havok:$(ssh havok hb last)" .   # copies the most recent scan folder
 
 ## Command toolbox (`hb kit`)
 
-A catalog of about 100 commands covering every tool and radio on the box: host discovery, port
+A catalog of about 120 commands covering every tool and radio on the box: host discovery, port
 scans, nmap scripts, web (including nuclei), SMB/AD, DNS, SNMP, default logins, quiet wired
 listening (p0f, passive ARP, IPv6, broadcasts, which switch port), Wi-Fi, Bluetooth, SDR receive,
-sub-GHz remotes and sensors (YARD Stick One, Flipper, rtl_433), two-way and ham radio (GMRS/FRS/MURS,
+sub-GHz remotes and sensors (YARD Stick One and rtl_433), two-way and ham radio (GMRS/FRS/MURS,
 APRS, NOAA), the ESP32 Marauder, the Meshtastic node, GPS, traffic capture, box info, and launchers
 for Wireshark, Gqrx, URH, Zenmap and CHIRP. Chains include **New network triage**, **Windows host
 enum**, **Web app first look**, **BLE survey**, **Wi-Fi survey**, **Sub-GHz remotes and sensors**,
 **Two-way and ham radio activity** and **Quiet look at a wired network**.
 
+**RTL-SDR:** list the dongles and their serials, measure frequency error (PPM), sweep any range or
+the whole 24 MHz-1.7 GHz span and draw it as a waterfall picture with the strongest frequencies,
+record audio on one frequency (FM, AM, sideband), FM broadcast, airband, scan GMRS/FRS 1-7 or
+marine VHF and record only when someone talks, save raw IQ for URH/Gqrx, rtl_433 with signal
+details or in analyzer mode for unknown signals, and share the dongle with your laptop over SSH
+(rtl_tcp bound to the box only). Every SDR recipe asks which dongle (0 or 1).
+
+**YARD Stick One:** check it's alive, rank a list of frequencies by signal strength (press the
+remote while it runs to find its frequency), listen with OOK, 2-FSK or GFSK at a chosen data
+rate, and list every capture saved in toolbox runs. Chains: **Identify an unknown remote** and
+**SDR site survey**.
+
 The radio and gadget recipes go through `hb-helper`, which only offers the receive-side helpers
-(yardstick/flipper/marauder scan, radio bands/aprs, meshbridge nodes). Replaying a remote and
+(yardstick scan/info/rssi/captures, marauder scan, radio bands/aprs, meshbridge nodes, sweep
+picture). Replaying a remote and
 other transmit steps stay on the dashboard, for things on your Known devices list, with approval.
 Only one program can use a radio at a time, so stop the matching dashboard job first.
 

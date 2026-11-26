@@ -2,10 +2,17 @@
 
     python3 -m havokbox.helpers.yardstick scan   --freq-mhz 433.92 --seconds 30 --work-dir W
     python3 -m havokbox.helpers.yardstick replay --id NAME --freq-mhz 433.92 --work-dir W
+    python3 -m havokbox.helpers.yardstick info
+    python3 -m havokbox.helpers.yardstick rssi --freqs 315,390,433.92 --seconds 5
+    python3 -m havokbox.helpers.yardstick captures --dir ~/havok/kit
 
 scan: ASK/OOK receive in rfcat's "lowball" mode (no sync word, no filtering) on one frequency.
 Each burst that isn't flat noise is saved as a capture file (W/subghz/<id>.json) so it can be
 replayed later. Output matches the old Flipper helper: {"received": [...], "captures": [...]}.
+
+scan also takes --mod ook|2fsk|gfsk and --baud for signals that aren't the usual ~4800 baud OOK.
+info: firmware build and chip (is it alive?). rssi: how busy each frequency is (signal strength,
+receive only). captures: list saved captures under a folder (files only, no radio).
 
 replay: transmits ONE saved capture, only if the capture's own frequency matches the approved
 frequency. The scope gate has already checked the band (rf.tx_bands) and consumed an approval
@@ -64,16 +71,100 @@ def list_captures(work_dir: str) -> list[dict]:
     return out
 
 
-def setup_rx(radio, mods, hz: int, drate: int) -> None:
+# The CC1111's bands (MHz); outside these the chip won't tune.
+BANDS = ((300.0, 348.0), (391.0, 464.0), (782.0, 928.0))
+MOD_NAMES = {"ook": "ASK_OOK", "2fsk": "2FSK", "gfsk": "GFSK"}
+MAX_FREQS = 16
+
+
+def in_band(freq_mhz: float) -> bool:
+    return any(lo <= float(freq_mhz) <= hi for lo, hi in BANDS)
+
+
+def setup_rx(radio, mods, hz: int, drate: int, mod: str = "ASK_OOK") -> None:
     radio.setFreq(hz)
-    radio.setMdmModulation(mods["ASK_OOK"])
+    radio.setMdmModulation(mods[mod])
     radio.setMdmDRate(drate)
     radio.lowball(1)
 
 
-def scan(radio, mods, freq_mhz: float, seconds: int, work_dir: str, clock=time.time) -> dict:
+def _rssi_dbm(raw) -> float:
+    """CC1111 RSSI byte -> dBm (datasheet: signed byte / 2 - 74)."""
+    v = raw[0] if isinstance(raw, (bytes, bytearray)) else int(raw)
+    v = v - 256 if v >= 128 else v
+    return round(v / 2 - 74, 1)
+
+
+def info(radio) -> dict:
+    out = {"status": "ok"}
+    for key, fn in (("build", "getBuildInfo"), ("part", "getPartNum")):
+        try:
+            v = getattr(radio, fn)()
+            out[key] = v.decode(errors="replace").strip() if isinstance(v, (bytes, bytearray)) else str(v)
+        except Exception as e:
+            out[key] = f"unavailable ({e})"[:80]
+    return out
+
+
+def rssi(radio, mods, freqs, seconds_each: int, clock=time.time, sleep=time.sleep) -> dict:
+    """Receive-only: sample signal strength on each frequency, report average and peak."""
+    rows, skipped = [], []
+    for f in list(freqs)[:MAX_FREQS]:
+        if not in_band(f):
+            skipped.append(f)
+            continue
+        setup_rx(radio, mods, _hz(f), DEFAULT_DRATE)
+        try:
+            radio.setModeRX()
+        except Exception:
+            pass
+        vals = []
+        end = clock() + max(1, int(seconds_each))
+        while clock() < end and len(vals) < 2000:
+            try:
+                vals.append(_rssi_dbm(radio.getRSSI()))
+            except Exception:
+                break
+            sleep(0.02)
+        if vals:
+            vals.sort()
+            rows.append({"freq_mhz": round(float(f), 3), "avg_dbm": round(sum(vals) / len(vals), 1),
+                         "peak_dbm": vals[-1], "floor_dbm": vals[len(vals) // 10], "samples": len(vals)})
+    try:
+        radio.setModeIDLE()
+    except Exception:
+        pass
+    rows.sort(key=lambda r: (r["peak_dbm"], r["avg_dbm"]), reverse=True)
+    return {"status": "ok", "busiest_first": rows, "skipped_out_of_band": skipped}
+
+
+def all_captures(root: str) -> list[dict]:
+    """Every saved capture under root (e.g. ~/havok/kit/*/subghz/), newest first. Files only."""
+    out = []
+    for dirpath, _dirs, files in os.walk(root):
+        if os.path.basename(dirpath) != "subghz":
+            continue
+        for f in files:
+            if not f.endswith(".json"):
+                continue
+            path = os.path.join(dirpath, f)
+            try:
+                with open(path) as fh:
+                    c = json.load(fh)
+                out.append({"id": c["id"], "freq_mhz": round(c["freq_hz"] / 1e6, 3),
+                            "modulation": c.get("modulation", "ASK_OOK"), "baud": c.get("drate"),
+                            "bytes": len(bytes.fromhex(c.get("payload_hex", ""))),
+                            "saved_at": c.get("saved_at"), "folder": os.path.dirname(dirpath)})
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    out.sort(key=lambda c: c.get("saved_at") or 0, reverse=True)
+    return out[:200]
+
+
+def scan(radio, mods, freq_mhz: float, seconds: int, work_dir: str, clock=time.time,
+         mod: str = "ASK_OOK", drate: int = DEFAULT_DRATE) -> dict:
     hz = _hz(freq_mhz)
-    setup_rx(radio, mods, hz, DEFAULT_DRATE)
+    setup_rx(radio, mods, hz, drate, mod)
     received, saved = [], 0
     stamp = time.strftime("%Y%m%d%H%M%S")
     end = clock() + max(1, int(seconds))
@@ -86,11 +177,12 @@ def scan(radio, mods, freq_mhz: float, seconds: int, work_dir: str, clock=time.t
             data = bytes(data or b"")
             if is_noise(data):
                 continue
-            rec = {"bytes": len(data), "hex": data[:32].hex(), "freq_mhz": round(hz / 1e6, 3)}
+            rec = {"bytes": len(data), "hex": data[:32].hex(), "freq_mhz": round(hz / 1e6, 3),
+                   "modulation": mod, "baud": drate}
             if saved < MAX_CAPTURES:
                 cid = f"ys_{stamp}_{saved + 1}"
                 with open(os.path.join(cap_dir(work_dir), cid + ".json"), "w") as fh:
-                    json.dump({"id": cid, "freq_hz": hz, "modulation": "ASK_OOK", "drate": DEFAULT_DRATE,
+                    json.dump({"id": cid, "freq_hz": hz, "modulation": mod, "drate": drate,
                                "payload_hex": data.hex(), "saved_at": int(clock())}, fh)
                 rec["id"] = cid
                 saved += 1
@@ -133,12 +225,37 @@ def main(argv=None) -> int:
     s.add_argument("--freq-mhz", type=float, required=True)
     s.add_argument("--seconds", type=int, required=True)
     s.add_argument("--work-dir", required=True)
+    s.add_argument("--mod", choices=sorted(MOD_NAMES), default="ook")
+    s.add_argument("--baud", type=int, default=DEFAULT_DRATE)
+    sub.add_parser("info")
+    q = sub.add_parser("rssi")
+    q.add_argument("--freqs", required=True, help="comma-separated MHz")
+    q.add_argument("--seconds", type=int, default=5, help="per frequency")
+    c = sub.add_parser("captures")
+    c.add_argument("--dir", required=True)
     r = sub.add_parser("replay")
     r.add_argument("--id", required=True)
     r.add_argument("--freq-mhz", type=float, required=True)
     r.add_argument("--work-dir", required=True)
     args = ap.parse_args(argv)
 
+    if args.cmd == "captures":
+        print(json.dumps({"status": "ok", "captures": all_captures(os.path.expanduser(args.dir))}))
+        return 0
+    if args.cmd == "scan" and not (300 <= args.baud <= 250000):
+        print(json.dumps({"status": "refused", "reason": "baud must be 300-250000"}))
+        return 0
+    if args.cmd == "scan" and not in_band(args.freq_mhz):
+        print(json.dumps({"status": "refused", "reason": f"{args.freq_mhz} MHz is outside the Yard Stick's "
+                          "bands (300-348, 391-464, 782-928)"}))
+        return 0
+    freqs = []
+    if args.cmd == "rssi":
+        try:
+            freqs = [float(x) for x in args.freqs.split(",") if x.strip()]
+        except ValueError:
+            print(json.dumps({"status": "refused", "reason": "freqs must be MHz numbers, comma-separated"}))
+            return 0
     if args.cmd == "replay" and not NAME_RE.match(args.id):
         print(json.dumps({"status": "refused", "reason": "invalid capture id"}))
         return 0
@@ -147,7 +264,12 @@ def main(argv=None) -> int:
         radio = rflib.RfCat()
         mods = {"ASK_OOK": rflib.MOD_ASK_OOK, "2FSK": rflib.MOD_2FSK, "GFSK": rflib.MOD_GFSK}
         if args.cmd == "scan":
-            result = scan(radio, mods, args.freq_mhz, args.seconds, args.work_dir)
+            result = scan(radio, mods, args.freq_mhz, args.seconds, args.work_dir,
+                          mod=MOD_NAMES[args.mod], drate=args.baud)
+        elif args.cmd == "info":
+            result = info(radio)
+        elif args.cmd == "rssi":
+            result = rssi(radio, mods, freqs, args.seconds)
         else:
             result = replay(radio, mods, args.id, args.freq_mhz, args.work_dir)
     except ImportError:

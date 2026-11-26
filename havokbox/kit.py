@@ -34,7 +34,8 @@ from urllib.parse import urlsplit
 RECIPES_PATH = Path(__file__).with_name("kit_recipes.json")
 PLACEHOLDER = re.compile(r"\{([a-z]+)\}")
 KNOWN = {"target", "host", "port", "ports", "url", "domain", "iface", "wlan", "mon", "channel",
-         "bdaddr", "hci", "outdir", "wordlist", "freq", "seconds", "tty"}
+         "bdaddr", "hci", "outdir", "wordlist", "freq", "seconds", "tty",
+         "sdr", "freqs", "fmin", "fmax", "demod", "mod", "baud"}
 RISKS = ("passive", "discovery", "probe", "active")
 CRED_DIRS = ("/usr/share/seclists/Passwords/Default-Credentials/", "/opt/havokbox/")
 WORDLIST_ROOTS = ("/usr/share/wordlists", "/usr/share/seclists", "/usr/share/dirb",
@@ -53,10 +54,16 @@ LABELS = {
     "domain": "Domain (lab DNS name)", "iface": "Network interface", "wlan": "Wi-Fi interface",
     "mon": "Monitor-mode interface", "channel": "Wi-Fi channel", "bdaddr": "Bluetooth address",
     "hci": "Bluetooth adapter", "wordlist": "Wordlist", "freq": "Frequency (MHz)",
-    "seconds": "Duration (seconds)", "tty": "USB serial port (Flipper, Marauder)",
+    "seconds": "Duration (seconds)", "tty": "USB serial port (Marauder)",
+    "sdr": "Which RTL-SDR (0 = first, 1 = second)", "freqs": "Frequencies in MHz, comma-separated",
+    "fmin": "Start frequency (MHz)", "fmax": "End frequency (MHz)",
+    "demod": "Demodulation (fm, wbfm, am, usb, lsb)", "mod": "Modulation (ook, 2fsk, gfsk)",
+    "baud": "Data rate (baud)",
 }
 DEFAULTS = {"hci": "hci0", "seconds": "30", "channel": "6", "wordlist": "/usr/share/wordlists/dirb/common.txt",
-            "freq": "433.92", "tty": "/dev/ttyACM0"}
+            "freq": "433.92", "tty": "/dev/ttyUSB0",
+            "sdr": "0", "freqs": "315,390,433.92,915", "fmin": "400", "fmax": "470", "demod": "fm",
+            "mod": "ook", "baud": "4800"}
 
 
 class KitError(ValueError):
@@ -156,6 +163,8 @@ def validate_recipe(r: Recipe) -> None:
     if re.search(r"\bonesixtyone\b", r.cmd) and (r.risk != "active" or "-w " not in r.cmd
                                                   or "-c /opt/havokbox/" not in r.cmd):
         raise KitError(f"{r.id}: SNMP community checks must be active, paced (-w) and use the box's list")
+    if re.search(r"\brtl_eeprom\b", r.cmd) and not re.search(r"\brtl_eeprom -d \{sdr\}(\s*$|\s*[|;)])", r.cmd):
+        raise KitError(f"{r.id}: rtl_eeprom may only read (rtl_eeprom -d {{sdr}}, no write flags)")
     if "{domain}" in r.cmd and "{host}" not in r.cmd:
         raise KitError(f"{r.id}: a {{domain}} recipe must query an in-scope {{host}} server")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,60}", r.id):
@@ -299,6 +308,29 @@ def check_value(name: str, value: str, ctx: Context, risk: str = "discovery") ->
         if not 24 <= f <= 1766:
             raise KitError("frequency must be 24-1766 MHz (RTL-SDR range)")
         return f"{f:g}"
+    if name == "sdr":
+        if not re.fullmatch(r"[0-3]", v):
+            raise KitError("SDR must be 0-3 (0 is the first dongle)")
+        return v
+    if name in ("fmin", "fmax"):
+        return check_value("freq", v, ctx, risk)
+    if name == "freqs":
+        parts = [x.strip() for x in v.split(",") if x.strip()]
+        if not 1 <= len(parts) <= 16:
+            raise KitError("give 1-16 frequencies, comma-separated, e.g. 315,433.92")
+        return ",".join(check_value("freq", x, ctx, risk) for x in parts)
+    if name == "demod":
+        if v.lower() not in ("fm", "wbfm", "am", "usb", "lsb", "raw"):
+            raise KitError("demodulation must be fm, wbfm, am, usb, lsb or raw")
+        return v.lower()
+    if name == "mod":
+        if v.lower() not in ("ook", "2fsk", "gfsk"):
+            raise KitError("modulation must be ook, 2fsk or gfsk")
+        return v.lower()
+    if name == "baud":
+        if not v.isdigit() or not 300 <= int(v) <= 250000:
+            raise KitError("baud must be 300-250000")
+        return str(int(v))
     if name == "tty":
         if not re.fullmatch(r"/dev/(tty(ACM|USB)\d{1,2}|serial/by-id/[A-Za-z0-9._:+-]{1,120})", v):
             raise KitError("serial port must look like /dev/ttyACM0, /dev/ttyUSB0 or /dev/serial/by-id/...")

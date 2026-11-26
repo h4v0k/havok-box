@@ -70,7 +70,8 @@ SAMPLE = {"target": "10.20.0.0/24", "host": "10.20.0.5", "port": "80", "ports": 
           "url": "http://10.20.0.5/", "domain": "corp.lab", "iface": "eth0", "wlan": "wlan1",
           "mon": "wlan1mon", "channel": "6", "bdaddr": "AA:BB:CC:DD:EE:FF", "hci": "hci0",
           "wordlist": "/usr/share/wordlists/dirb/common.txt", "freq": "433.92", "seconds": "30",
-          "tty": "/dev/ttyACM0"}
+          "tty": "/dev/ttyACM0", "sdr": "0", "freqs": "315,433.92", "fmin": "400", "fmax": "470",
+          "demod": "fm", "mod": "ook", "baud": "4800"}
 
 
 def test_every_shipped_recipe_and_chain_renders():
@@ -293,19 +294,54 @@ def test_catalog_covers_every_radio_and_gadget():
     c = kit.load()
     cmds = " ".join(r.cmd for r in c.recipes.values())
     for tool in ("airodump-ng", "kismet", "bluetoothctl", "sniff_receiver", "rtl_433", "rtl_power",
-                 "readsb", "yardstick scan", "flipper scan", "marauder scan", "radio bands",
+                 "readsb", "yardstick scan", "yardstick info", "yardstick rssi", "yardstick captures",
+                 "marauder scan", "radio bands", "rtl_sdr ", "rtl_tcp", "rtl_eeprom", "sweep picture",
                  "radio aprs", "meshbridge nodes", "gpspipe", "p0f", "netdiscover -p",
                  "atk6-detect-new-ip6", "nuclei", "tcpdump", "tshark", "nmap", "netexec",
                  "gqrx", "urh", "wireshark", "chirp"):
         assert tool in cmds, f"no toolbox recipe uses {tool}"
 
 
+HELPER_OK = ("yardstick scan", "yardstick info", "yardstick rssi", "yardstick captures", "marauder scan",
+             "radio bands", "radio aprs", "meshbridge nodes", "sweep picture")
+
+
+def test_hb_helper_wrapper_allows_only_the_receive_list():
+    import pathlib
+    setup = pathlib.Path("scripts/kali-setup.sh").read_text()
+    line = next(l for l in setup.splitlines() if '"yardstick scan"' in l and l.rstrip().endswith(";;"))
+    case = line.strip()[:-2].strip().rstrip(")")
+    allowed = {x.strip('"') for x in case.split("|")}
+    assert allowed == set(HELPER_OK) | {"marauder stop"}
+    assert not any(w in case for w in ("replay", "deauth", "flipper"))
+
+
+def test_rtl_tcp_bound_to_localhost_and_eeprom_read_only(tmp_path):
+    for r in kit.load().recipes.values():
+        if "rtl_tcp" in r.cmd:
+            assert "-a 127.0.0.1" in r.cmd, r.id
+    for cmd in ("rtl_eeprom -d {sdr} -s HBSDR9", "rtl_eeprom -d {sdr} -w {outdir}/x.bin"):
+        p = tmp_path / "b.json"
+        p.write_text(json.dumps({"recipes": [{"id": "bad-ee", "category": "x", "name": "x", "what": "x", "cmd": cmd}]}))
+        with pytest.raises(kit.KitError):
+            kit.load(p)
+
+
+def test_new_sdr_fields_checked():
+    c = ctx()
+    assert kit.check_value("freqs", "315, 433.92", c) == "315,433.92"
+    assert kit.check_value("demod", "AM", c) == "am" and kit.check_value("sdr", "1", c) == "1"
+    for name, bad in (("freqs", "433;rm"), ("freqs", ",".join(["433"] * 17)), ("sdr", "4"),
+                      ("demod", "wbfm -x"), ("mod", "ask"), ("baud", "1"), ("fmin", "5")):
+        with pytest.raises(kit.KitError):
+            kit.check_value(name, bad, c)
+
+
 def test_helpers_are_receive_only_in_the_kit():
     for r in kit.load().recipes.values():
         if "hb-helper" in r.cmd:
             sub = r.cmd.split("hb-helper", 1)[1].split()[:2]
-            assert " ".join(sub) in ("yardstick scan", "flipper scan", "marauder scan", "radio bands",
-                                     "radio aprs", "meshbridge nodes"), r.id
+            assert " ".join(sub) in HELPER_OK, r.id
             assert r.risk == "passive", r.id
 
 
