@@ -1343,6 +1343,362 @@
    "est": "<30s",
    "notes": "A working 'private' community often means the device's settings can be changed over the network. -w 200: wait 200 milliseconds between tries.",
    "source": "https://www.kali.org/tools/onesixtyone/"
+  },
+  {
+   "id": "subghz-yardstick-listen",
+   "category": "Sub-GHz remotes and sensors (receive only)",
+   "name": "Listen for remotes with the YARD Stick One",
+   "what": "Record button presses from key fobs, gate remotes and sensors on one frequency. Receive only.",
+   "when": "Press your remote near the box while this runs; each press is saved so the dashboard can show it.",
+   "cmd": "hb-helper yardstick scan --freq-mhz {freq} --seconds {seconds} --work-dir {outdir} | tee {outdir}/yardstick.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "Common frequencies: 315 (US cars, garages), 390 (garage doors), 433.92 (most remotes, sensors). The YARD Stick covers 300-348, 391-464 and 782-928 MHz. Stop any dashboard sub-GHz scan first; only one program can use it at a time. Replaying a capture is a dashboard step for remotes on your Known devices list.",
+   "source": "https://github.com/atlas0fd00m/rfcat"
+  },
+  {
+   "id": "subghz-flipper-listen",
+   "category": "Sub-GHz remotes and sensors (receive only)",
+   "name": "Listen for remotes with the Flipper Zero",
+   "what": "Use the Flipper as a backup sub-GHz receiver over USB and record what it hears on one frequency.",
+   "when": "When the YARD Stick is busy or unplugged.",
+   "cmd": "hb-helper flipper scan --port {tty} --freq-mhz {freq} --seconds {seconds} | tee {outdir}/flipper.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "Close qFlipper and the Flipper's own sub-GHz app first. The Flipper usually shows up as /dev/ttyACM0.",
+   "source": "https://docs.flipper.net/development/cli"
+  },
+  {
+   "id": "subghz-rtl433-auto",
+   "category": "Sub-GHz remotes and sensors (receive only)",
+   "name": "Decode sensors on 315, 433 and 915 MHz in turn",
+   "what": "Hop the SDR between the three common license-free bands and decode weather stations, tire sensors, doorbells and alarms.",
+   "when": "See which sensors are around, without picking a frequency.",
+   "cmd": "rtl_433 -f 315M -f 433.92M -f 915M -H 20 -M time:iso -M level -T {seconds} -F json:{outdir}/rtl433-hop.json",
+   "needs": [
+    "rtl_433"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "-H 20: stay 20 seconds on each frequency before hopping.",
+   "source": "https://github.com/merbanan/rtl_433"
+  },
+  {
+   "id": "radio-bands",
+   "category": "Ham and two-way radio (receive only)",
+   "name": "Who's talking on GMRS, FRS, MURS and the ham bands",
+   "what": "Sweep the two-way radio bands with the SDR and list channels that are busy, named where they match a known channel.",
+   "when": "Check radio activity at a site or event.",
+   "cmd": "hb-helper radio bands --seconds {seconds} | tee {outdir}/radio-bands.json",
+   "needs": [
+    "hb-helper",
+    "rtl_power"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "Receive only. Bands: FRS/GMRS, MURS, NOAA weather, 2 m and 70 cm ham.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr"
+  },
+  {
+   "id": "radio-aprs",
+   "category": "Ham and two-way radio (receive only)",
+   "name": "Hear APRS stations (144.390 MHz)",
+   "what": "Decode APRS, the ham radio position and message broadcast, and list stations heard.",
+   "when": "See nearby ham stations, weather stations and trackers.",
+   "cmd": "hb-helper radio aprs --seconds {seconds} | tee {outdir}/aprs.json",
+   "needs": [
+    "hb-helper",
+    "rtl_fm",
+    "direwolf"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "Give it at least 2 minutes; stations send every few minutes.",
+   "source": "https://github.com/wb2osz/direwolf"
+  },
+  {
+   "id": "radio-noaa",
+   "category": "Ham and two-way radio (receive only)",
+   "name": "Listen to NOAA weather radio",
+   "what": "Record a NOAA weather broadcast to a sound file you can play back.",
+   "when": "Check the SDR and antenna with a strong, always-on signal.",
+   "cmd": "timeout {seconds} rtl_fm -f 162.55M -M fm -s 22050 -g 40 | sox -t raw -r 22050 -e signed -b 16 -c 1 - {outdir}/noaa.wav",
+   "needs": [
+    "rtl_fm",
+    "sox"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "162.55 MHz is WX7; Tampa Bay is usually 162.55 or 162.475. Change -f if it's quiet.",
+   "source": "https://www.weather.gov/nwr/"
+  },
+  {
+   "id": "gadget-marauder-scan",
+   "category": "Handheld gadgets (Marauder, LoRa mesh)",
+   "name": "Wi-Fi survey from the ESP32 Marauder",
+   "what": "Have the Marauder list nearby Wi-Fi networks over USB, so the box's own Wi-Fi card stays free.",
+   "when": "Second opinion on Wi-Fi, or when the Alfa is busy.",
+   "cmd": "hb-helper marauder scan --port {tty} --seconds {seconds} | tee {outdir}/marauder.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "Listens to beacons only. The Marauder usually shows up as /dev/ttyUSB0.",
+   "source": "https://github.com/justcallmekoko/ESP32Marauder"
+  },
+  {
+   "id": "gadget-mesh-nodes",
+   "category": "Handheld gadgets (Marauder, LoRa mesh)",
+   "name": "Meshtastic nodes heard",
+   "what": "Show the LoRa mesh nodes the box's Heltec radio has heard, with signal and last seen.",
+   "when": "Check the mesh link to your phone, or see who else is on the mesh.",
+   "cmd": "hb-helper meshbridge nodes --data-dir /data/havokbox | tee {outdir}/mesh-nodes.json",
+   "needs": [
+    "hb-helper"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<5s",
+   "notes": "Reads the bridge's saved list; it doesn't touch the radio.",
+   "source": "https://meshtastic.org/docs/"
+  },
+  {
+   "id": "gps-track",
+   "category": "GPS",
+   "name": "Log GPS positions",
+   "what": "Record the GPS position stream to a file for the set time.",
+   "when": "Track where a survey or drive happened.",
+   "cmd": "timeout {seconds} gpspipe -w | tee {outdir}/gps-track.json",
+   "needs": [
+    "gpspipe"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "Lines with \"class\":\"TPV\" carry the position. No fix indoors; put the antenna near a window.",
+   "source": "https://gpsd.io/gpspipe.html"
+  },
+  {
+   "id": "gps-status",
+   "category": "GPS",
+   "name": "Is the GPS working?",
+   "what": "Show the GPS receiver, satellites seen and whether it has a fix.",
+   "when": "Before a wardrive or survey.",
+   "cmd": "(systemctl is-active gpsd; timeout 20 gpspipe -w -n 15 | grep -E '\"class\":\"(DEVICES|SKY|TPV)\"') | tee {outdir}/gps-status.txt",
+   "needs": [
+    "gpspipe"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<20s",
+   "notes": "mode 3 in a TPV line means a 3D fix.",
+   "source": "https://gpsd.io/"
+  },
+  {
+   "id": "wire-p0f",
+   "category": "Listening on the wire (no packets sent)",
+   "name": "Identify devices from their traffic (p0f)",
+   "what": "Guess each device's operating system from the traffic it sends, without sending anything.",
+   "when": "Plugged into a switch port or mirror; quiet fingerprinting.",
+   "cmd": "timeout {seconds} p0f -i {iface} -o {outdir}/p0f.log",
+   "needs": [
+    "p0f"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-o: log file. Leave it running a few minutes on a busy network.",
+   "source": "https://lcamtuf.coredump.cx/p0f3/"
+  },
+  {
+   "id": "wire-netdiscover-passive",
+   "category": "Listening on the wire (no packets sent)",
+   "name": "List devices by listening to ARP",
+   "what": "Build a list of IP and MAC addresses from ARP traffic only.",
+   "when": "Find hosts without sending a single packet.",
+   "cmd": "timeout {seconds} netdiscover -p -i {iface} -P | tee {outdir}/netdiscover.txt",
+   "needs": [
+    "netdiscover"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-p: passive (listen only). -P: plain output.",
+   "source": "https://www.kali.org/tools/netdiscover/"
+  },
+  {
+   "id": "wire-ipv6-new",
+   "category": "Listening on the wire (no packets sent)",
+   "name": "Spot new IPv6 devices",
+   "what": "Print each IPv6 address as it appears on the network.",
+   "when": "Networks where devices only talk IPv6 locally.",
+   "cmd": "timeout {seconds} atk6-detect-new-ip6 {iface} | tee {outdir}/ipv6-new.txt",
+   "needs": [
+    "atk6-detect-new-ip6"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "From thc-ipv6. Listens for duplicate address detection messages.",
+   "source": "https://www.kali.org/tools/thc-ipv6/"
+  },
+  {
+   "id": "wire-broadcasts",
+   "category": "Listening on the wire (no packets sent)",
+   "name": "Capture name and address broadcasts",
+   "what": "Save DHCP, mDNS, LLMNR and NetBIOS broadcasts, which reveal device names and roles.",
+   "when": "Early on a new network.",
+   "cmd": "tshark -i {iface} -a duration:{seconds} -f \"udp port 67 or udp port 68 or udp port 5353 or udp port 5355 or udp port 137 or udp port 138\" -w {outdir}/broadcasts.pcapng",
+   "needs": [
+    "tshark"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "Open the file in Wireshark afterwards.",
+   "source": "https://www.wireshark.org/docs/man-pages/tshark.html"
+  },
+  {
+   "id": "wire-lldp-cdp",
+   "category": "Listening on the wire (no packets sent)",
+   "name": "Which switch and port am I on?",
+   "what": "Listen for LLDP and CDP announcements from the switch (name, port, VLAN).",
+   "when": "Plugged into a wall jack or switch port.",
+   "cmd": "tshark -i {iface} -a duration:{seconds} -f \"ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc\" -V | tee {outdir}/lldp-cdp.txt",
+   "needs": [
+    "tshark"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "Switches announce every 30-60 seconds; give it at least 60.",
+   "source": "https://www.wireshark.org/docs/man-pages/tshark.html"
+  },
+  {
+   "id": "web-nuclei",
+   "category": "Web servers",
+   "name": "Check a web server for known problems (nuclei)",
+   "what": "Look for exposed files, misconfigurations and known technologies, using safe checks only.",
+   "when": "After a web server shows up in a port scan.",
+   "cmd": "nuclei -u {url} -silent -disable-update-check -no-interactsh -rate-limit 20 -tags exposure,misconfiguration,tech -exclude-tags intrusive,dos,fuzz,default-login -o {outdir}/nuclei.txt",
+   "needs": [
+    "nuclei"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Default-login checks are left out here; they're in the Default logins section. -rate-limit: requests per second.",
+   "source": "https://docs.projectdiscovery.io/tools/nuclei/overview"
+  },
+  {
+   "id": "wifi-hcx-convert",
+   "category": "Wi-Fi",
+   "name": "List what a capture contains",
+   "what": "Summarise a Wi-Fi capture file from an earlier run: networks, clients and whether a handshake is in it.",
+   "when": "After a dashboard handshake capture or airodump run.",
+   "cmd": "ls -t ~/havok/kit/*/airodump-*.cap 2>/dev/null | head -1 | xargs -r hcxpcapngtool -o /dev/null --info=stdout | tee {outdir}/capture-info.txt",
+   "needs": [
+    "hcxpcapngtool"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<10s",
+   "notes": "Uses the newest airodump capture in the toolbox folder.",
+   "source": "https://github.com/ZerBea/hcxtools"
+  },
+  {
+   "id": "app-wireshark",
+   "category": "Desktop apps",
+   "name": "Wireshark (live capture)",
+   "what": "Open Wireshark capturing on an interface.",
+   "when": "Look at traffic by eye.",
+   "cmd": "wireshark -i {iface} -k",
+   "needs": [
+    "wireshark"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "until closed",
+   "notes": "-k: start capturing straight away.",
+   "source": "https://www.wireshark.org/"
+  },
+  {
+   "id": "app-gqrx",
+   "category": "Desktop apps",
+   "name": "Gqrx (radio spectrum and listening)",
+   "what": "Open the spectrum viewer to see and listen to signals with the SDR.",
+   "when": "Find a signal by eye before decoding it.",
+   "cmd": "gqrx",
+   "needs": [
+    "gqrx"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "until closed",
+   "notes": "Stop the dashboard's plane tracker and other SDR jobs first.",
+   "source": "https://gqrx.dk/"
+  },
+  {
+   "id": "app-urh",
+   "category": "Desktop apps",
+   "name": "Universal Radio Hacker (analyse a remote's signal)",
+   "what": "Open URH to record and pick apart sub-GHz signals.",
+   "when": "Work out how a remote encodes its button presses.",
+   "cmd": "urh",
+   "needs": [
+    "urh"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "until closed",
+   "notes": "Use its Record and Analysis tabs; sending is done from the dashboard only.",
+   "source": "https://github.com/jopohl/urh"
+  },
+  {
+   "id": "app-zenmap",
+   "category": "Desktop apps",
+   "name": "Zenmap (nmap with a window)",
+   "what": "Open the nmap GUI.",
+   "when": "Browse scan results visually.",
+   "cmd": "zenmap-kbx",
+   "needs": [
+    "zenmap-kbx"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "until closed",
+   "notes": "Scans you start in Zenmap aren't scope-checked; prefer the toolbox recipes for scanning.",
+   "source": "https://nmap.org/zenmap/"
+  },
+  {
+   "id": "app-chirp",
+   "category": "Desktop apps",
+   "name": "CHIRP (program Baofeng and GMRS radios)",
+   "what": "Open CHIRP to read and write channel lists on your handhelds over USB.",
+   "when": "Set up your Baofeng DM-32UV or GM-15 radios.",
+   "cmd": "chirp",
+   "needs": [
+    "chirp"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "until closed",
+   "notes": "Plug the programming cable in first.",
+   "source": "https://chirpmyradio.com/"
   }
  ],
  "chains": [
@@ -1464,6 +1820,36 @@
     "creds-mssql",
     "creds-vnc",
     "creds-snmp"
+   ]
+  },
+  {
+   "id": "chain-subghz-survey",
+   "name": "Sub-GHz remotes and sensors",
+   "what": "Hop the common bands for sensors, then listen on 433.92 MHz with the YARD Stick for remotes.",
+   "steps": [
+    "sdr-rtl-test",
+    "subghz-rtl433-auto",
+    "subghz-yardstick-listen"
+   ]
+  },
+  {
+   "id": "chain-radio-survey",
+   "name": "Two-way and ham radio activity",
+   "what": "Busy channels on GMRS/FRS/MURS/ham, then APRS stations heard.",
+   "steps": [
+    "radio-bands",
+    "radio-aprs"
+   ]
+  },
+  {
+   "id": "chain-quiet-wire",
+   "name": "Quiet look at a wired network",
+   "what": "Find out which switch port you're on and who's there, without sending anything.",
+   "steps": [
+    "wire-lldp-cdp",
+    "wire-netdiscover-passive",
+    "wire-broadcasts",
+    "wire-p0f"
    ]
   }
  ]

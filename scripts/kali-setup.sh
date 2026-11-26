@@ -123,7 +123,7 @@ apt-get update -qq || warn "apt update had warnings; continuing"
 CORE_PKGS="python3 python3-venv python3-pip openssl nftables ca-certificates curl network-manager dnsmasq-base iw"
 RECON_PKGS="kismet gpsd gpsd-clients rtl-sdr rtl-433 aircrack-ng hcxtools hcxdumptool tshark tcpdump nmap iw bluez testssl.sh seclists responder"
 # Tools the dashboard buttons already call (hidden until installed), + the Yard Stick and quiet discovery
-RECON_PKGS="$RECON_PKGS rfcat direwolf multimon-ng python3-serial python3-intelhex nuclei netexec feroxbuster p0f onesixtyone snmp ldap-utils thc-ipv6 mitm6 hydra whatweb smbclient exploitdb arp-scan netdiscover bettercap usbutils fping nbtscan enum4linux-ng nikto gobuster ssh-audit dnsrecon dnsutils"
+RECON_PKGS="$RECON_PKGS rfcat direwolf multimon-ng python3-serial python3-intelhex nuclei netexec feroxbuster p0f onesixtyone snmp ldap-utils thc-ipv6 mitm6 hydra whatweb smbclient exploitdb arp-scan netdiscover bettercap usbutils fping nbtscan enum4linux-ng nikto gobuster ssh-audit dnsrecon dnsutils sox"
 # Build deps for readsb (ADS-B), which isn't packaged
 BUILD_PKGS="git build-essential cmake pkg-config librtlsdr-dev libusb-1.0-0-dev zlib1g-dev libzstd-dev libncurses-dev"
 DESKTOP_PKGS="kali-desktop-xfce tigervnc-standalone-server novnc websockify"
@@ -579,6 +579,20 @@ export HB_SCANS_DIR="\${HB_SCANS_DIR:-$DATA_DIR/scans}"
 exec "$VENV/bin/python" -m havokbox.hbcli --scope "\${HB_SCOPE:-$APP_DIR/config/scope.yaml}" "\$@"
 EOF
 chmod 0755 /usr/local/bin/hb
+# hb-helper: receive-only entry point to the box's radio/gadget helpers for the toolbox (hb kit).
+# Transmit and attack subcommands (replay, deauth) are refused here; those run only from the
+# dashboard, behind the scope gate and an approval.
+cat > /usr/local/bin/hb-helper <<EOF
+#!/usr/bin/env bash
+export PYTHONPATH="$APP_DIR\${PYTHONPATH:+:\$PYTHONPATH}"
+case "\$1 \$2" in
+  "yardstick scan"|"flipper scan"|"marauder scan"|"marauder stop"|"radio bands"|"radio aprs"|"meshbridge nodes") ;;
+  *) echo "hb-helper: '\$1 \$2' isn't available here (receive-only: yardstick scan, flipper scan, marauder scan, radio bands, radio aprs, meshbridge nodes)" >&2; exit 2 ;;
+esac
+mod="\$1"; shift
+exec "$VENV/bin/python" -m "havokbox.helpers.\$mod" "\$@"
+EOF
+chmod 0755 /usr/local/bin/hb-helper
 # Let nmap send raw packets without sudo (nmap --privileged). Scripts (NSE) still run as you, not root.
 apt-get install -y -qq zenity libcap2-bin >/dev/null 2>&1 || warn "zenity/libcap2-bin not installed"
 if command -v nmap >/dev/null && command -v setcap >/dev/null; then

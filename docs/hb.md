@@ -196,10 +196,19 @@ scp -r "havok:$(ssh havok hb last)" .   # copies the most recent scan folder
 
 ## Command toolbox (`hb kit`)
 
-A catalog of about 70 common recon and enumeration commands (host discovery, port scans, nmap
-scripts, web, SMB/AD, DNS, SNMP, Wi-Fi, Bluetooth, SDR receive, traffic capture, box info) plus
-step-by-step chains such as **New network triage**, **Windows host enum**, **Web app first look**,
-**BLE survey** and **Wi-Fi survey**.
+A catalog of about 100 commands covering every tool and radio on the box: host discovery, port
+scans, nmap scripts, web (including nuclei), SMB/AD, DNS, SNMP, default logins, quiet wired
+listening (p0f, passive ARP, IPv6, broadcasts, which switch port), Wi-Fi, Bluetooth, SDR receive,
+sub-GHz remotes and sensors (YARD Stick One, Flipper, rtl_433), two-way and ham radio (GMRS/FRS/MURS,
+APRS, NOAA), the ESP32 Marauder, the Meshtastic node, GPS, traffic capture, box info, and launchers
+for Wireshark, Gqrx, URH, Zenmap and CHIRP. Chains include **New network triage**, **Windows host
+enum**, **Web app first look**, **BLE survey**, **Wi-Fi survey**, **Sub-GHz remotes and sensors**,
+**Two-way and ham radio activity** and **Quiet look at a wired network**.
+
+The radio and gadget recipes go through `hb-helper`, which only offers the receive-side helpers
+(yardstick/flipper/marauder scan, radio bands/aprs, meshbridge nodes). Replaying a remote and
+other transmit steps stay on the dashboard, for things on your Known devices list, with approval.
+Only one program can use a radio at a time, so stop the matching dashboard job first.
 
 - **Desktop:** double-click **havok-box toolbox** (or run `hb kit --gui`). It opens a page in the
   browser: pick a category or search, fill in the blanks (targets are suggested from the

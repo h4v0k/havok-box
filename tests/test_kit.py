@@ -19,6 +19,7 @@ def scope(**rf):
 def ctx(**kw):
     kw.setdefault("ifaces", ["lo", "eth0", "wlan1", "wlan1mon"])
     kw.setdefault("file_exists", lambda p: True)
+    kw.setdefault("dev_exists", lambda p: p in ("/dev/ttyACM0", "/dev/ttyUSB0"))
     kw.setdefault("resolve", lambda h: {"web.lab": ["10.20.0.7"], "evil.com": ["8.8.8.8"]}.get(h, []))
     return kit.Context(scope=kw.pop("scope", scope(ble_addresses=["AA:BB:CC:DD:EE:FF"])), **kw)
 
@@ -68,7 +69,8 @@ def test_shipped_catalog_is_valid_and_clean():
 SAMPLE = {"target": "10.20.0.0/24", "host": "10.20.0.5", "port": "80", "ports": "22,80",
           "url": "http://10.20.0.5/", "domain": "corp.lab", "iface": "eth0", "wlan": "wlan1",
           "mon": "wlan1mon", "channel": "6", "bdaddr": "AA:BB:CC:DD:EE:FF", "hci": "hci0",
-          "wordlist": "/usr/share/wordlists/dirb/common.txt", "freq": "433.92", "seconds": "30"}
+          "wordlist": "/usr/share/wordlists/dirb/common.txt", "freq": "433.92", "seconds": "30",
+          "tty": "/dev/ttyACM0"}
 
 
 def test_every_shipped_recipe_and_chain_renders():
@@ -283,3 +285,44 @@ def test_kit_web_defaults_skips_never_list_and_hydra_hides_passwords():
     assert f"--exclude {NEVER}" in p.commands[0][1] and "--max-parallelism 1" in p.commands[0][1]
     p = kit.plan(c, "creds-ssh", {"host": "10.20.0.5"}, ctx())
     assert "(hidden)" in p.commands[0][1] and "-o " not in p.commands[0][1]
+
+
+# ---------------------------------------------------------------- every piece of kit is covered
+
+def test_catalog_covers_every_radio_and_gadget():
+    c = kit.load()
+    cmds = " ".join(r.cmd for r in c.recipes.values())
+    for tool in ("airodump-ng", "kismet", "bluetoothctl", "sniff_receiver", "rtl_433", "rtl_power",
+                 "readsb", "yardstick scan", "flipper scan", "marauder scan", "radio bands",
+                 "radio aprs", "meshbridge nodes", "gpspipe", "p0f", "netdiscover -p",
+                 "atk6-detect-new-ip6", "nuclei", "tcpdump", "tshark", "nmap", "netexec",
+                 "gqrx", "urh", "wireshark", "chirp"):
+        assert tool in cmds, f"no toolbox recipe uses {tool}"
+
+
+def test_helpers_are_receive_only_in_the_kit():
+    for r in kit.load().recipes.values():
+        if "hb-helper" in r.cmd:
+            sub = r.cmd.split("hb-helper", 1)[1].split()[:2]
+            assert " ".join(sub) in ("yardstick scan", "flipper scan", "marauder scan", "radio bands",
+                                     "radio aprs", "meshbridge nodes"), r.id
+            assert r.risk == "passive", r.id
+
+
+@pytest.mark.parametrize("cmd", ["hb-helper yardstick replay --id x --freq-mhz 433.92 --work-dir {outdir}",
+                                 "hb-helper marauder deauth --port {tty}",
+                                 "python3 -c 'import rflib; d.RFxmit(b)'"])
+def test_transmit_helpers_rejected(tmp_path, cmd):
+    bad = {"recipes": [{"id": "bad-tx", "category": "x", "name": "x", "what": "x", "cmd": cmd}]}
+    p = tmp_path / "b.json"
+    p.write_text(json.dumps(bad))
+    with pytest.raises(kit.KitError):
+        kit.load(p)
+
+
+def test_tty_field_checked():
+    c = ctx()
+    assert kit.check_value("tty", "/dev/ttyACM0", c) == "/dev/ttyACM0"
+    for bad in ("/dev/ttyACM9", "/dev/sda", "/etc/passwd", "/dev/ttyACM0; rm -rf ~", "../dev/ttyUSB0"):
+        with pytest.raises(kit.KitError):
+            kit.check_value("tty", bad, c)

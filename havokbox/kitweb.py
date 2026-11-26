@@ -22,6 +22,13 @@ from . import kit
 STATIC = Path(__file__).with_name("static")
 
 
+def _serial_ports() -> list[str]:
+    out = []
+    for pat in ("/dev/serial/by-id/*", "/dev/ttyACM*", "/dev/ttyUSB*"):
+        out += sorted(str(p) for p in Path("/").glob(pat.lstrip("/")))
+    return out[:32]
+
+
 def choices(ctx: kit.Context) -> dict:
     """Pick-lists for the form: engagement ranges, interfaces, Mine BLE, wordlists, recent hosts."""
     sc = ctx.scope
@@ -44,6 +51,7 @@ def choices(ctx: kit.Context) -> dict:
         "mon": [i for i in ctx.ifaces if "mon" in i or i.startswith("wl")],
         "bdaddr": sorted(sc.ble), "hci": ["hci0", "hci1"], "wordlist": wls[:400],
         "never": [str(n) for n in sc.exclude],
+        "tty": _serial_ports(),
     }
 
 

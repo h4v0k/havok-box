@@ -8,6 +8,7 @@ command here - there is no free-form command box - and every placeholder is vali
   {domain}                hostname syntax; only allowed in recipes that also query a {host}
   {bdaddr}                MAC syntax; "probe" recipes also require it on the Known devices list
   {iface} {wlan} {mon}    must be an interface that exists on the box
+  {tty}                   a USB serial port that exists (/dev/ttyACM*, /dev/ttyUSB*, /dev/serial/by-id/*)
   {wordlist}              must be a file under the standard wordlist folders
   everything else         strict format (numbers, port lists, channel, hci, seconds, MHz)
 
@@ -33,7 +34,7 @@ from urllib.parse import urlsplit
 RECIPES_PATH = Path(__file__).with_name("kit_recipes.json")
 PLACEHOLDER = re.compile(r"\{([a-z]+)\}")
 KNOWN = {"target", "host", "port", "ports", "url", "domain", "iface", "wlan", "mon", "channel",
-         "bdaddr", "hci", "outdir", "wordlist", "freq", "seconds"}
+         "bdaddr", "hci", "outdir", "wordlist", "freq", "seconds", "tty"}
 RISKS = ("passive", "discovery", "probe", "active")
 CRED_DIRS = ("/usr/share/seclists/Passwords/Default-Credentials/", "/opt/havokbox/")
 WORDLIST_ROOTS = ("/usr/share/wordlists", "/usr/share/seclists", "/usr/share/dirb",
@@ -42,7 +43,8 @@ WORDLIST_ROOTS = ("/usr/share/wordlists", "/usr/share/seclists", "/usr/share/dir
 FORBIDDEN = re.compile(
     r"\b(medusa|ncrack|patator|crackmapexec\s+\S+\s+\S+\s+-p|responder|mitm6|bettercap|"
     r"arpspoof|ettercap|aireplay-ng|mdk3|mdk4|wifite|reaver|bully|metasploit|msfconsole|"
-    r"msfvenom|sqlmap|searchsploit|-t\s*xmit|rf\.RFxmit|RFxmit|hcitool\s+cc|l2ping\s+-f)\b",
+    r"msfvenom|sqlmap|searchsploit|-t\s*xmit|rf\.RFxmit|RFxmit|hcitool\s+cc|l2ping\s+-f|"
+    r"replay|deauth|transmit)\b",
     re.I)
 
 LABELS = {
@@ -51,10 +53,10 @@ LABELS = {
     "domain": "Domain (lab DNS name)", "iface": "Network interface", "wlan": "Wi-Fi interface",
     "mon": "Monitor-mode interface", "channel": "Wi-Fi channel", "bdaddr": "Bluetooth address",
     "hci": "Bluetooth adapter", "wordlist": "Wordlist", "freq": "Frequency (MHz)",
-    "seconds": "Duration (seconds)",
+    "seconds": "Duration (seconds)", "tty": "USB serial port (Flipper, Marauder)",
 }
 DEFAULTS = {"hci": "hci0", "seconds": "30", "channel": "6", "wordlist": "/usr/share/wordlists/dirb/common.txt",
-            "freq": "433.92"}
+            "freq": "433.92", "tty": "/dev/ttyACM0"}
 
 
 class KitError(ValueError):
@@ -195,6 +197,7 @@ class Context:
     ifaces: list = field(default_factory=_ifaces)
     resolve: object = None          # host -> list of IPs
     file_exists: object = os.path.isfile
+    dev_exists: object = None          # serial-port check; defaults to os.path.exists
 
     def resolver(self, host: str) -> list[str]:
         if self.resolve:
@@ -296,6 +299,12 @@ def check_value(name: str, value: str, ctx: Context, risk: str = "discovery") ->
         if not 24 <= f <= 1766:
             raise KitError("frequency must be 24-1766 MHz (RTL-SDR range)")
         return f"{f:g}"
+    if name == "tty":
+        if not re.fullmatch(r"/dev/(tty(ACM|USB)\d{1,2}|serial/by-id/[A-Za-z0-9._:+-]{1,120})", v):
+            raise KitError("serial port must look like /dev/ttyACM0, /dev/ttyUSB0 or /dev/serial/by-id/...")
+        if not (ctx.dev_exists or os.path.exists)(v):
+            raise KitError(f"{v} isn't plugged in (no such port)")
+        return v
     if name == "seconds":
         if not v.isdigit() or not 1 <= int(v) <= 86400:
             raise KitError("seconds must be 1-86400")

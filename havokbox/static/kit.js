@@ -78,7 +78,7 @@ function openItem(r) {
   $("#d-steps").replaceChildren(...(r.chain ? [el("ol", { class: "steps" }, ...r.steps.map((s) => {
     const rec = DATA.recipes.find((x) => x.id === s); return el("li", { text: rec ? rec.name : s });
   }))] : []));
-  const prefill = (n) => (n === "target" && CHOICES.target && CHOICES.target[0]) || DATA.defaults[n] || "";
+  const prefill = (n) => (["target", "tty"].includes(n) && CHOICES[n] && CHOICES[n][0]) || DATA.defaults[n] || "";
   $("#form").replaceChildren(...r.params.map((n) => field(n, prefill(n))));
   $("#d-notes").textContent = r.notes || "";
   $("#d-src").textContent = r.source ? "Source: " + r.source : "";
