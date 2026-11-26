@@ -58,7 +58,7 @@ def test_shipped_catalog_is_valid_and_clean():
     for r in c.recipes.values():
         assert not kit.FORBIDDEN.search(r.cmd), r.id
         assert r.risk in kit.RISKS
-        if re.search(r"\bnmap\b", r.cmd):
+        if re.search(r"\bnmap\b", r.cmd) and "http-default-accounts" not in r.cmd:
             assert "{outdir}" in r.cmd, f"{r.id}: nmap output should be saved"
     cats = c.categories()
     for need in ("Bluetooth", "Port"):
@@ -231,3 +231,55 @@ def test_web_rejects_odd_tokens_and_bodies(cat):
                    base_url="http://127.0.0.1:5000")
     assert c.get("/api/recipes?t=%C3%A9").status_code == 403
     assert c.post("/api/preview?t=tok", json=[1, 2]).json()["ok"] is False
+
+
+def test_default_login_checks_need_typed_yes(tmp_path):
+    from starlette.testclient import TestClient
+    from havokbox import kitweb
+    c = kit.load()
+    assert "creds-ssh" in c.recipes and c.recipes["creds-ssh"].risk == "active"
+    launched = []
+    cl = TestClient(kitweb.build_app(c, lambda: ctx(), "tok", {}, launcher=launched.append),
+                    base_url="http://127.0.0.1:5000")
+    body = {"id": "creds-ssh", "values": {"host": "10.20.0.5"}}
+    r = cl.post("/api/run?t=tok", json=body).json()
+    assert not r["ok"] and r["need_confirm"] and not launched
+    r = cl.post("/api/run?t=tok", json={**body, "confirm": "YES "}).json()
+    assert r["ok"] and launched
+    assert "ACTIVE" in (kit.kit_dir() / "history.log").read_text()
+    with pytest.raises(kit.KitError):    # out of scope still refused
+        kit.plan(c, "creds-ssh", {"host": "8.8.8.8"}, ctx())
+
+
+@pytest.mark.parametrize("cmd", [
+    "hydra -C /opt/havokbox/default-creds.txt {host} ssh",                         # no throttling
+    "hydra -C {wordlist} -t 1 -W 1 -f {host} ssh",                                 # user wordlist
+    "hydra -P /usr/share/wordlists/rockyou.txt -t 1 -W 1 -f -l root {host} ssh",   # big list
+    "L=/opt/havokbox/../../usr/share/wordlists/rockyou.txt; hydra -C \"$L\" -t 1 -W 1 -f {host} ssh",
+    "hydra -P/tmp/rockyou.txt -C /opt/havokbox/default-creds.txt -t 1 -W 1 -f {host} ssh",
+    "hydra -x 4:8:a1 -C /opt/havokbox/default-creds.txt -t 1 -W 1 -f {host} ssh",
+    "hydra -M /tmp/hosts.txt -C /opt/havokbox/default-creds.txt -t 1 -W 1 -f ssh",
+])
+def test_hydra_only_as_gentle_default_check(tmp_path, cmd):
+    p = tmp_path / "b.json"
+    p.write_text(json.dumps({"recipes": [{"id": "h1", "category": "x", "name": "x", "what": "x",
+                                          "cmd": cmd, "risk": "active"}]}))
+    with pytest.raises(kit.KitError):
+        kit.load(p)
+
+
+def test_cli_requires_confirm_for_default_logins(tmp_path, monkeypatch):
+    from havokbox import hbcli
+    sc = tmp_path / "scope.yaml"
+    sc.write_text("networks:\n  include: [10.20.0.0/24]\n  exclude: []\n")
+    monkeypatch.setattr(hbcli.sys.stdin, "isatty", lambda: False)
+    assert hbcli.main(["--scope", str(sc), "kit", "run", "creds-ssh", "host=10.20.0.5"]) == 2
+
+
+def test_kit_web_defaults_skips_never_list_and_hydra_hides_passwords():
+    c = kit.load()
+    wide = Scope({"networks": {"include": ["192.168.0.0/16"], "exclude": [NEVER]}})
+    p = kit.plan(c, "creds-web-defaults", {"target": "192.168.0.0/16"}, kit.Context(scope=wide, ifaces=[]))
+    assert f"--exclude {NEVER}" in p.commands[0][1] and "--max-parallelism 1" in p.commands[0][1]
+    p = kit.plan(c, "creds-ssh", {"host": "10.20.0.5"}, ctx())
+    assert "(hidden)" in p.commands[0][1] and "-o " not in p.commands[0][1]

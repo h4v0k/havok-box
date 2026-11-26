@@ -602,6 +602,11 @@ DESKTOP
 done
 DESK="$(getent passwd "$RUN_USER" | cut -d: -f6)/Desktop"
 install -d -o "$RUN_USER" -g "$RUN_USER" "$DESK"
+# Default-login lists for the gated "default passwords" checks (fallbacks when SecLists lacks one)
+install -d -m 0755 /opt/havokbox
+install -m 0644 "$APP_DIR/config/default-creds.example.txt" /opt/havokbox/default-creds.txt
+install -m 0644 "$APP_DIR/config/snmp-communities.txt" /opt/havokbox/snmp-communities.txt
+install -m 0644 "$APP_DIR/config/vnc-passwords.txt" /opt/havokbox/vnc-passwords.txt
 # Command toolbox: a local-only browser page; the terminal it opens keeps it running (close = stop)
 cat > /usr/share/applications/havok-box-kit.desktop <<DESKTOP
 [Desktop Entry]

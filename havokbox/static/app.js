@@ -163,9 +163,10 @@ function stepButton(p) {
     type: "button", class: "btn step" + (p.suggested ? " suggested" : ""),
     onclick: () => (p.needs_approval ? openSheet(p) : runPassive(p)),
   }, p.label || p.tool,
-     el("small", { text: p.approved ? `Approved · tap to run · ${p.category}` : !p.in_scope ? `Out of scope · ${p.category}`
-       : !p.runnable ? `Tool not installed yet · ${p.category}`
-       : `${p.needs_approval ? "Needs approval" : "Passive"} · ${p.category}${p.source === "commander" ? " · AI" : ""}` }));
+     el("small", { text: (p.approved ? "Approved, tap to run" : !p.in_scope ? "Out of scope"
+       : !p.runnable ? "Tool not installed yet"
+       : `${p.needs_approval ? "Needs your approval" : "Listen-only"}${p.source === "commander" ? " · suggested by AI" : ""}`)
+       + (p.help ? " · " + p.help : "") }));
 }
 
 function renderFindings() {
@@ -260,13 +261,20 @@ function renderTools() {
   if (JSON.stringify(cat.map((t) => t.tool)) !== JSON.stringify(toolCat.map((t) => t.tool))) {
     toolCat = cat;
     const pick = $("#tool-pick");
-    pick.replaceChildren(...cat.map((t) => el("option", { value: t.tool, text: `${t.label} · ${t.category}` })));
+    pick.replaceChildren(...cat.map((t) => el("option", { value: t.tool, text: t.label + (t.needs_approval ? " (needs approval)" : "") })));
   }
   const pick = $("#tool-pick");
   const t = cat.find((x) => x.tool === pick.value) || cat[0];
   if (!t) { $("#tool-params").replaceChildren(el("p", { class: "hint", text: "No tools available." })); return; }
-  $("#tool-params").replaceChildren(...Object.entries(t.params).map(([name, meta]) =>
-    el("label", { class: "sub" }, `${name}${meta.required ? " *" : ""} (${meta.type})`,
+  const PARAM = { ip: "Device address (IP)", network: "Address range (e.g. 10.20.0.0/24)", service: "Service",
+    port: "Port number", bssid: "Wi-Fi network ID (BSSID)", channel: "Wi-Fi channel", client: "Client device ID (MAC)",
+    addr: "Bluetooth address", seconds: "How long (seconds)", freq: "Frequency", freq_mhz: "Frequency (MHz)",
+    id: "Saved capture name", query: "Search words", domain: "Domain name", ssid: "Wi-Fi network name" };
+  $("#tool-params").replaceChildren(...(t.help ? [el("p", { class: "hint", text: t.help })] : []),
+    ...(t.tool === "creds.default" || t.tool === "creds.web_defaults"
+      ? [el("p", { class: "hint", text: "Fill in either one device address or a range, not both. Service \"common\" tries SSH, FTP, Telnet, Windows sharing, remote desktop, databases and VNC." })] : []),
+    ...Object.entries(t.params).map(([name, meta]) =>
+    el("label", { class: "sub" }, `${PARAM[name] || name}${meta.required ? " (required)" : ""}`,
       meta.type === "choice"
         ? el("select", { class: "text tool-arg", "data-p": name }, (meta.choices || []).map((c) => el("option", { value: c, text: c })))
         : el("input", { class: "text tool-arg", "data-p": name, placeholder: meta.type }))));

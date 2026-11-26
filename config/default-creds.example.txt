@@ -1,20 +1,52 @@
-# havok-box bundled default-credential list for creds.default (hydra -C user:pass).
-# <= 20 pairs, vendor defaults only. Copy to the path in hw.default_creds. LAB USE ONLY.
+# havok-box fallback default-login list (user:password, one per line; "user:" = blank password).
+# Used only when SecLists' Default-Credentials list for a service isn't installed.
+# Factory defaults and the most common "never changed it" logins only. LAB USE ONLY.
 admin:admin
 admin:password
 admin:
+admin:1234
+admin:12345
+admin:123456
+admin:admin123
+admin:changeme
+admin:default
+admin:pass
+administrator:administrator
+administrator:password
+administrator:
 root:root
 root:toor
+root:
+root:password
+root:admin
+root:changeme
 root:calvin
 user:user
+user:password
 guest:guest
-ubnt:ubnt
-cisco:cisco
-admin:admin1234
+guest:
+test:test
 support:support
 service:service
+operator:operator
+manager:manager
+ubnt:ubnt
+cisco:cisco
 pi:raspberry
 tomcat:tomcat
-manager:manager
+tomcat:s3cret
 sa:
+sa:sa
+sa:password
 postgres:postgres
+postgres:
+mysql:mysql
+oracle:oracle
+ftp:ftp
+anonymous:anonymous
+vagrant:vagrant
+ubuntu:ubuntu
+kali:kali
+debian:debian
+supervisor:supervisor
+admin:admin1234

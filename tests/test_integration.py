@@ -27,7 +27,10 @@ SHELLS = {"sh", "bash", "/bin/sh", "/bin/bash", "zsh"}
 
 
 def sample_target(spec):
-    return {k: SAMPLE[k] for k, m in spec.params.items() if m.get("required")}
+    t = {k: SAMPLE[k] for k, m in spec.params.items() if m.get("required")}
+    if not t and "ip" in spec.params:      # tools that take either one host or a range
+        t = {"ip": SAMPLE["ip"]}
+    return t
 
 
 class RegistryIntegrationTest(unittest.TestCase):

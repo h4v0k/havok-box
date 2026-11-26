@@ -84,6 +84,8 @@ function openItem(r) {
   $("#d-src").textContent = r.source ? "Source: " + r.source : "";
   $("#d-notes-wrap").hidden = !(r.notes || r.source);
   $("#cmd").hidden = true; msg("");
+  const active = r.chain ? r.steps.some((s) => (DATA.recipes.find((x) => x.id === s) || {}).risk === "active") : r.risk === "active";
+  $("#confirm-wrap").hidden = !active; $("#confirm").value = "";
   window.scrollTo(0, 0);
 }
 
@@ -113,7 +115,7 @@ $("#copy").addEventListener("click", async () => {
 $("#run").addEventListener("click", async () => {
   try {
     const p = await preview(); if (!p) return;
-    const r = await api("/api/run", { id: current.id, values: values() });
+    const r = await api("/api/run", { id: current.id, values: values(), confirm: $("#confirm").value });
     msg(r.ok ? "Running in a terminal window. Output: " + r.outdir : r.error, r.ok ? "ok" : "err");
   } catch (e) { msg(e.message, "err"); }
 });

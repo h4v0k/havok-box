@@ -34,12 +34,13 @@ RECIPES_PATH = Path(__file__).with_name("kit_recipes.json")
 PLACEHOLDER = re.compile(r"\{([a-z]+)\}")
 KNOWN = {"target", "host", "port", "ports", "url", "domain", "iface", "wlan", "mon", "channel",
          "bdaddr", "hci", "outdir", "wordlist", "freq", "seconds"}
-RISKS = ("passive", "discovery", "probe")
+RISKS = ("passive", "discovery", "probe", "active")
+CRED_DIRS = ("/usr/share/seclists/Passwords/Default-Credentials/", "/opt/havokbox/")
 WORDLIST_ROOTS = ("/usr/share/wordlists", "/usr/share/seclists", "/usr/share/dirb",
                   "/usr/share/dirbuster", str(Path.home() / "havok" / "wordlists"))
 # Never allowed in a recipe (lab rules: no exploitation, cred attacks, poisoning, deauth, transmit).
 FORBIDDEN = re.compile(
-    r"\b(hydra|medusa|ncrack|patator|crackmapexec\s+\S+\s+\S+\s+-p|responder|mitm6|bettercap|"
+    r"\b(medusa|ncrack|patator|crackmapexec\s+\S+\s+\S+\s+-p|responder|mitm6|bettercap|"
     r"arpspoof|ettercap|aireplay-ng|mdk3|mdk4|wifite|reaver|bully|metasploit|msfconsole|"
     r"msfvenom|sqlmap|searchsploit|-t\s*xmit|rf\.RFxmit|RFxmit|hcitool\s+cc|l2ping\s+-f)\b",
     re.I)
@@ -129,6 +130,30 @@ def validate_recipe(r: Recipe) -> None:
         raise KitError(f"{r.id}: risk must be one of {RISKS}")
     if FORBIDDEN.search(r.cmd):
         raise KitError(f"{r.id}: command uses a tool or mode that's not allowed on this box")
+    if re.search(r"\bhydra\b", r.cmd):
+        # Default-login checks only: typed confirmation, one connection at a time with a pause,
+        # stop at the first hit, and only the factory-default lists - never a user wordlist.
+        if r.risk != "active" or "{wordlist}" in r.cmd or not all(
+                f in r.cmd for f in (" -t 1 ", " -W 1 ", " -f ")):
+            raise KitError(f"{r.id}: hydra is only allowed as a gentle default-login check (risk active, -t 1 -W 1 -f)")
+        if re.search(r"\s-(x|p|M|L|l)\s|\s-[CPMxLp]\S", r.cmd):
+            raise KitError(f"{r.id}: hydra may not use generated passwords, extra lists or target files")
+        if not (re.search(r"\s-t 1\s", r.cmd) and re.search(r"\s-W 1\s", r.cmd)):
+            raise KitError(f"{r.id}: hydra must run with -t 1 -W 1")
+        lists = re.findall(r"\bL=([^;\s]+)", r.cmd) + \
+            [x.strip('"') for x in re.findall(r"\s-[CP]\s+(\S+)", r.cmd) if x.strip('"') != "$L"]
+        real = [os.path.realpath(x) for x in lists]
+        if not real or not all(any(x.startswith(d) for d in CRED_DIRS) for x in real):
+            raise KitError(f"{r.id}: hydra may only use the default-credential lists")
+    if "http-default-accounts" in r.cmd and (r.risk != "active" or not all(
+            f in r.cmd for f in ("--max-parallelism 1", "--max-hostgroup 1", "--scan-delay 1s"))):
+        raise KitError(f"{r.id}: web default-login checks must run one at a time (--max-parallelism 1 "
+                       "--max-hostgroup 1 --scan-delay 1s) and be marked active")
+    if "http-default-accounts" in r.cmd and re.search(r"\s-o[ANXGS]\s", r.cmd):
+        raise KitError(f"{r.id}: web default-login output can't be saved to files (it holds passwords)")
+    if re.search(r"\bonesixtyone\b", r.cmd) and (r.risk != "active" or "-w " not in r.cmd
+                                                  or "-c /opt/havokbox/" not in r.cmd):
+        raise KitError(f"{r.id}: SNMP community checks must be active, paced (-w) and use the box's list")
     if "{domain}" in r.cmd and "{host}" not in r.cmd:
         raise KitError(f"{r.id}: a {{domain}} recipe must query an in-scope {{host}} server")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,60}", r.id):
@@ -307,6 +332,7 @@ class Plan:
     label: str
     outdir: Path
     commands: list          # (name, command, needs_root)
+    active: bool = False    # includes a default-login check: needs a typed "yes" to run
 
     @property
     def root(self) -> bool:
@@ -349,7 +375,14 @@ def plan(cat: Catalog, item_id: str, values: dict, ctx: Context, when: dt.dateti
         n += 1
     as_root = os.geteuid() == 0
     cmds = [(r.name, render(r, values, ctx, str(outdir)), r.root and not as_root) for r in steps]
-    return Plan(label=label, outdir=outdir, commands=cmds)
+    return Plan(label=label, outdir=outdir, commands=cmds, active=any(r.risk == "active" for r in steps))
+
+
+CONFIRM_WORD = "yes"
+
+
+def confirmed(p: Plan, typed: str | None) -> bool:
+    return not p.active or (typed or "").strip().lower() == CONFIRM_WORD
 
 
 def write(p: Plan) -> Path:
@@ -363,7 +396,8 @@ def write(p: Plan) -> Path:
     run.write_text(p.runner())
     run.chmod(0o500)
     with open(kit_dir() / "history.log", "a") as fh:
-        fh.write(f"{dt.datetime.now().isoformat(timespec='seconds')}\t{p.label}\t{p.outdir}\n")
+        tag = "ACTIVE\t" if p.active else ""
+        fh.write(f"{dt.datetime.now().isoformat(timespec='seconds')}\t{tag}{p.label}\t{p.outdir}\n")
     return run
 
 

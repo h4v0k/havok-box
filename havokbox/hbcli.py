@@ -395,6 +395,12 @@ def cmd_kit(a) -> int:
         print("+ " + c, file=sys.stderr)
     if a.dry_run:
         return 0
+    if p.active and not kit.confirmed(p, a.confirm):
+        if not sys.stdin.isatty():
+            raise ScopeError('this tries logins on the device; add --confirm yes to run it')
+        if not kit.confirmed(p, input("This tries default logins on the device. Type yes to run: ")):
+            print("cancelled")
+            return 1
     run = kit.write(p)
     return subprocess.call(["bash", str(run)])
 
@@ -500,6 +506,7 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("values", nargs="*", help="name=value pairs, e.g. target=10.20.0.0/24")
     k.add_argument("--gui", action="store_true", help="open the toolbox window in the browser")
     k.add_argument("-n", "--dry-run", action="store_true", help="print the command, don't run it")
+    k.add_argument("--confirm", help='type "yes" to run a default-login check without the prompt')
     e = sub.add_parser("engage", help="show, start or end the engagement (the lab ranges in scope)")
     e.add_argument("action", nargs="?", default="status", choices=["status", "start", "end"])
     e.add_argument("networks", nargs="*")

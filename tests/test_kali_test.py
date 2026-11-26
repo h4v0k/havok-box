@@ -38,8 +38,7 @@ class CredsDefaultTest(unittest.TestCase):
         self.assertIn("-t", argv)
         self.assertEqual(argv[argv.index("-t") + 1], "1")
         self.assertIn("-f", argv)
-        self.assertIn("-w", argv)
-        self.assertEqual(argv[argv.index("-w") + 1], "1")
+        self.assertEqual(argv[argv.index("-W") + 1], "1")   # 1 s between connections
         self.assertEqual(argv[-2:], ["10.10.0.5", "ssh"])
 
     def test_build_uses_bundled_creds_file_default(self):
@@ -54,10 +53,8 @@ class CredsDefaultTest(unittest.TestCase):
 
     def test_parse_creds_found_never_returns_credential(self):
         data = kt.parse_creds(HYDRA_SUCCESS, "10.10.0.5", "ssh")
-        self.assertEqual(data, {"found": True, "service": "ssh", "ip": "10.10.0.5"})
-        dumped = json.dumps(data)
-        self.assertNotIn("admin123", dumped)
-        self.assertNotIn("admin", dumped.replace("found", "").replace("ip", ""))
+        self.assertEqual(data, {"found": True, "service": "ssh", "ip": "10.10.0.5", "accounts": ["admin"]})
+        self.assertNotIn("admin123", json.dumps(data))   # the account name, never the password
 
     def test_parse_creds_not_found(self):
         data = kt.parse_creds(HYDRA_FAIL, "10.10.0.5", "ssh")
@@ -303,3 +300,113 @@ class PoisonHelperCliMainTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CredsRangeAndWebTest(unittest.TestCase):
+    NMAP = ('<nmaprun><host><address addr="10.10.0.7" addrtype="ipv4"/><ports>'
+            '<port protocol="tcp" portid="22"><state state="open"/></port>'
+            '<port protocol="tcp" portid="3306"><state state="open"/></port></ports></host></nmaprun>')
+    WEB = ('<nmaprun><host><address addr="10.10.0.9" addrtype="ipv4"/><ports><port protocol="tcp" portid="80">'
+           '<state state="open"/><script id="http-default-accounts" output="&#xa;  [Cisco router] at /&#xa;'
+           '    admin:cisco123&#xa;"/></port></ports></host></nmaprun>')
+
+    def test_range_checks_only_open_services_and_hides_passwords(self):
+        class R:
+            calls = []
+            def __call__(s, argv):
+                s.calls.append(argv)
+                if argv[0] == "nmap":
+                    return CredsRangeAndWebTest.NMAP
+                return HYDRA_SUCCESS.replace("10.10.0.5", argv[-2]) if argv[-1] == "ssh" else HYDRA_FAIL
+        rec = R()
+        lab = Scope({"networks": {"include": ["10.10.0.0/24"], "exclude": ["10.10.0.99/32"]}})
+        ctx = ToolCtx(runner=rec, mode="stealth", scope=lab, hw=HW)
+        res = kt.creds_default({"target": {"network": "10.10.0.0/24", "service": "common"}}, ctx)
+        hydras = [c for c in rec.calls if c[0] == "hydra"]
+        self.assertEqual(sorted(c[-1] for c in hydras), ["mysql", "ssh"])
+        self.assertIn("--exclude", rec.calls[0])
+        # a never-list host that slips into the port-check output is still skipped
+        rec.calls.clear()
+        CredsRangeAndWebTest.NMAP, saved = self.NMAP.replace("10.10.0.7", "10.10.0.99"), self.NMAP
+        try:
+            kt.creds_default({"target": {"network": "10.10.0.0/24", "service": "common"}}, ctx)
+        finally:
+            CredsRangeAndWebTest.NMAP = saved
+        self.assertEqual([c for c in rec.calls if c[0] == "hydra"], [])
+        rec.calls.clear()
+        res = kt.creds_default({"target": {"network": "10.10.0.0/24", "service": "common"}}, ctx)
+        self.assertEqual(res["data"]["checked"], 2)
+        self.assertEqual(res["data"]["hits"][0]["accounts"], ["admin"])
+        self.assertNotIn("admin123", json.dumps(res))
+
+    def test_needs_exactly_one_of_ip_or_network(self):
+        with self.assertRaises(ValueError):
+            kt.build_creds_default({"service": "ssh"}, "stealth", SCOPE, HW)
+        with self.assertRaises(ValueError):
+            kt.build_creds_default({"ip": "10.10.0.5", "network": "10.10.0.0/24"}, "stealth", SCOPE, HW)
+
+    def test_web_defaults_report_account_not_password(self):
+        hits = kt.parse_web_defaults(self.WEB)
+        self.assertEqual(hits, [{"ip": "10.10.0.9", "port": 80, "product": "Cisco router", "path": "/",
+                                 "account": "admin"}])
+        argv, = kt.build_creds_web_defaults({"network": "10.10.0.0/24"}, "stealth", SCOPE, HW)
+        self.assertIn("http-default-accounts", argv)
+        for f in ("--max-parallelism", "--max-hostgroup", "--scan-delay"):
+            self.assertIn(f, argv)
+        with self.assertRaises(ValueError):
+            kt.build_creds_web_defaults({"ip": "10.10.0.5", "network": "8.8.8.0/24"}, "stealth", SCOPE, HW)
+
+    def test_gate_allows_in_scope_range_with_approval_only(self):
+        from havokbox.scope import Gate
+        g = Gate(Scope({"networks": {"include": ["10.10.0.0/24"], "exclude": []}}))
+        ok = g.evaluate({"category": "auth.attempt", "target": {"network": "10.10.0.0/24"}})
+        self.assertTrue(ok.allowed and ok.needs_approval)
+        self.assertFalse(g.evaluate({"category": "auth.attempt", "target": {"network": "8.8.8.0/24"}}).allowed)
+        both = {"ip": "10.10.0.5", "network": "8.8.8.0/24"}
+        self.assertFalse(g.evaluate({"category": "auth.attempt", "target": both}).allowed)
+
+
+class CredsRound2Test(unittest.TestCase):
+    def test_proposal_refuses_ip_and_network_together(self):
+        from havokbox.tasks import TaskError, make_task
+        from havokbox.tools.registry import default_registry
+        reg = default_registry()
+        for tool in ("creds.default", "creds.web_defaults"):
+            with self.assertRaises(TaskError):
+                make_task(reg, tool, {"ip": "10.10.0.5", "network": "8.8.8.0/24"}, "stealth", "r")
+
+    def test_common_leaves_out_lockout_prone_services(self):
+        self.assertNotIn("smb", kt.COMMON)
+        self.assertNotIn("rdp", kt.COMMON)
+
+    def test_ipv6_refused(self):
+        with self.assertRaises(ValueError):
+            kt.build_creds_default({"ip": "fe80::1", "service": "common"}, "stealth", SCOPE, HW)
+
+    def test_many_open_services_are_capped_and_reported(self):
+        hosts = "".join(f'<host><address addr="10.10.0.{i}" addrtype="ipv4"/><ports>'
+                        f'<port protocol="tcp" portid="22"><state state="open"/></port>'
+                        f'<port protocol="tcp" portid="abc"><state state="open"/></port></ports></host>'
+                        for i in range(1, 71))
+        lab = Scope({"networks": {"include": ["10.10.0.0/24"], "exclude": []}})
+        rec = Recorder("")
+        rec.out = f"<nmaprun>{hosts}</nmaprun>"
+        ctx = ToolCtx(runner=rec, mode="stealth", scope=lab, hw=HW)
+        res = kt.creds_default({"target": {"network": "10.10.0.0/24", "service": "common"}}, ctx)
+        self.assertEqual(res["data"]["checked"], kt.MAX_CHECKS)
+        self.assertEqual(res["data"]["skipped"], 70 - kt.MAX_CHECKS)
+        self.assertIn("skipped", res["summary"])
+
+    def test_https_and_port(self):
+        argv = kt.hydra_argv("10.10.0.5", "https", HW, port_override=8443)
+        self.assertEqual(argv[-4:], ["8443", "10.10.0.5", "https-get", "/"])
+
+
+class CredsPortTest(unittest.TestCase):
+    def test_port_used_for_check_and_login(self):
+        scan, hyd = kt.build_creds_default({"network": "10.10.0.0/24", "service": "http", "port": 8080},
+                                           "stealth", SCOPE, HW)
+        self.assertEqual(scan[scan.index("-p") + 1], "T:8080")
+        self.assertIn("-s", hyd)
+        argv, = kt.build_creds_default({"ip": "10.10.0.5", "service": "ssh", "port": 2222}, "stealth", SCOPE, HW)
+        self.assertEqual(argv[argv.index("-s") + 1], "2222")

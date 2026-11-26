@@ -106,6 +106,7 @@ def build_app(cat: kit.Catalog, ctx_factory, token: str, port_holder: dict,
         except (kit.KitError, ValueError) as e:
             return JSONResponse({"ok": False, "error": str(e)})
         return JSONResponse({"ok": True, "commands": [c for _, c, _ in p.commands], "root": p.root,
+                             "active": p.active,
                              "outdir": str(p.outdir)})
 
     async def run(request):
@@ -113,6 +114,10 @@ def build_app(cat: kit.Catalog, ctx_factory, token: str, port_holder: dict,
             return bad
         try:
             p = await _plan(request)
+            body = await request.json()
+            if not kit.confirmed(p, body.get("confirm") if isinstance(body, dict) else None):
+                return JSONResponse({"ok": False, "need_confirm": True,
+                                     "error": 'This tries logins on the device. Type yes in the box to run it.'})
             script = writer(p)
             launcher(script)
         except (kit.KitError, ValueError, OSError) as e:

@@ -163,9 +163,14 @@ def _add_kali_test(specs):
     secs = {"seconds": {"type": "int", "min": 30, "max": 300, "default": 120}}
     specs += [
         _spec("hydra", "test", name="creds.default", category="auth.attempt", space="wired",
-              params={"ip": {"type": "ip", "required": True},
-                      "service": {"type": "choice", "choices": ["ssh", "ftp", "smb", "http"], "default": "ssh"}},
+              params={"ip": {"type": "ip"}, "network": {"type": "cidr"},
+                      "service": {"type": "choice", "default": "ssh",
+                                  "choices": ["common", *sorted(kt.CRED_SERVICES)]},
+                      "port": {"type": "int", "min": 1, "max": 65535}},
               fn=kt.creds_default, build=lambda t, m, sc, hw: kt.build_creds_default(t, m, sc, hw)),
+        _spec("nmap", "test", name="creds.web_defaults", category="auth.attempt", space="wired",
+              params={"ip": {"type": "ip"}, "network": {"type": "cidr"}},
+              fn=kt.creds_web_defaults, build=lambda t, m, sc, hw: kt.build_creds_web_defaults(t, m, sc, hw)),
         _spec(None, "test", name="net.poison.responder", category="net.poison", space="wired",
               params={"network": {"type": "cidr", "required": True}, **secs},
               fn=kt.net_poison_responder, build=lambda t, m, sc, hw: kt.build_net_poison_responder(t, m, sc, hw)),

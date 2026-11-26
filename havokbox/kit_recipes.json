@@ -1,1261 +1,1470 @@
 {
-"recipes": [
-{
-"id": "disc-ping-sweep",
-"category": "Host discovery",
-"name": "Nmap ping sweep",
-"what": "Find live hosts with ICMP echo plus TCP SYN/ACK probes, no port scan.",
-"when": "First step on a new subnet.",
-"cmd": "nmap -sn -PE -PS22,80,443,445 -PA80,443 -oA {outdir}/hosts-sweep {target}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "10-60s",
-"notes": "-sn host discovery only; -PE ICMP echo; -PS/-PA TCP SYN/ACK ping ports. On the local segment nmap uses ARP automatically.",
-"source": "https://nmap.org/book/man-host-discovery.html"
-},
-{
-"id": "disc-arp-scan",
-"category": "Host discovery",
-"name": "ARP scan",
-"what": "ARP-sweep a range on your own segment and list IP, MAC and vendor.",
-"when": "The target range is on the box's own L2 segment; the most reliable discovery there.",
-"cmd": "arp-scan --interface={iface} --retry=2 {target} | tee {outdir}/arp-scan.txt",
-"needs": [
-"arp-scan"
-],
-"risk": "discovery",
-"root": true,
-"est": "5-15s",
-"notes": "--interface picks the NIC; the range is the engagement range you enter (not --localnet, which could reach past scope).",
-"source": "https://www.kali.org/tools/arp-scan/"
-},
-{
-"id": "disc-list-targets",
-"category": "Host discovery",
-"name": "List targets (no packets)",
-"what": "Expand a CIDR and reverse-resolve names without touching the targets.",
-"when": "Sanity-check scope before scanning.",
-"cmd": "nmap -sL -R -oN {outdir}/target-list.txt {target}",
-"needs": [
-"nmap"
-],
-"risk": "passive",
-"root": false,
-"est": "<10s",
-"notes": "-sL list scan sends only DNS queries; -R forces reverse DNS.",
-"source": "https://nmap.org/book/man-host-discovery.html"
-},
-{
-"id": "disc-fping",
-"category": "Host discovery",
-"name": "fping sweep",
-"what": "Fast ICMP sweep that prints only responding hosts.",
-"when": "Quick alive-list to feed other tools.",
-"cmd": "fping -a -g {target} 2>/dev/null | tee {outdir}/fping-alive.txt",
-"needs": [
-"fping"
-],
-"risk": "discovery",
-"root": true,
-"est": "10-30s",
-"notes": "-a show alive only; -g generate targets from CIDR.",
-"source": "https://www.kali.org/tools/fping/"
-},
-{
-"id": "disc-netdiscover-passive",
-"category": "Host discovery",
-"name": "Netdiscover passive ARP listen",
-"what": "Listen for ARP traffic to learn hosts without transmitting.",
-"when": "Quiet mapping of a segment.",
-"cmd": "timeout {seconds} netdiscover -p -i {iface} -P | tee {outdir}/netdiscover-passive.txt",
-"needs": [
-"netdiscover"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "-p passive (no ARP requests); -P parseable output; timeout bounds the run.",
-"source": "https://www.kali.org/tools/netdiscover/"
-},
-{
-"id": "ports-quick",
-"category": "Port scanning",
-"name": "Quick top-100 TCP",
-"what": "Fast scan of nmap's 100 most common TCP ports.",
-"when": "Fast first look at a host or small range.",
-"cmd": "nmap -F -T4 --open -oA {outdir}/ports-quick {target}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "10-60s",
-"notes": "-F top 100 ports; --open only open ports; -T4 faster timing.",
-"source": "https://nmap.org/book/man-port-specification.html"
-},
-{
-"id": "ports-top1000",
-"category": "Port scanning",
-"name": "Top-1000 TCP SYN",
-"what": "Default nmap SYN scan of the 1000 most common TCP ports.",
-"when": "Standard scan after host discovery.",
-"cmd": "nmap -sS -T4 --open -oA {outdir}/ports-top1000 {target}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "1-5 min/host",
-"notes": "-sS half-open scan; default port set is the top 1000.",
-"source": "https://nmap.org/book/man-port-scanning-techniques.html"
-},
-{
-"id": "ports-full-tcp",
-"category": "Port scanning",
-"name": "Full TCP 1-65535",
-"what": "Scan all TCP ports on one host.",
-"when": "Thorough follow-up on a single host.",
-"cmd": "nmap -p- -sS -T4 --min-rate 1000 --open -oA {outdir}/ports-full {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "2-20 min",
-"notes": "-p- all ports; --min-rate 1000 packets/sec floor (lower it on fragile links).",
-"source": "https://nmap.org/book/man-port-specification.html"
-},
-{
-"id": "ports-udp-top",
-"category": "Port scanning",
-"name": "UDP top 100",
-"what": "Scan the 100 most common UDP ports.",
-"when": "Looking for DNS, SNMP, NTP, TFTP and similar.",
-"cmd": "nmap -sU --top-ports 100 --open -T4 -oA {outdir}/ports-udp {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "5-20 min",
-"notes": "UDP is slow; open|filtered stays ambiguous until -sV.",
-"source": "https://nmap.org/book/man-port-scanning-techniques.html"
-},
-{
-"id": "ports-stealth-timing",
-"category": "Port scanning",
-"name": "Low-and-slow SYN scan",
-"what": "SYN scan with polite timing and few retries to reduce noise.",
-"when": "Fragile devices or rate-sensitive networks.",
-"cmd": "nmap -sS -Pn -T2 --max-retries 1 --scan-delay 100ms --open -oA {outdir}/ports-slow {target}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "10-60 min",
-"notes": "-T2 polite; --scan-delay between probes; -Pn skips host discovery.",
-"source": "https://nmap.org/book/man-performance.html"
-},
-{
-"id": "ports-connect-noroot",
-"category": "Port scanning",
-"name": "TCP connect scan (no root)",
-"what": "Full-connect scan that works without raw sockets.",
-"when": "Running unprivileged.",
-"cmd": "nmap -sT -Pn -T4 --open -oA {outdir}/ports-connect {target}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "2-10 min",
-"notes": "-sT uses the OS connect(); noisier in target logs than -sS.",
-"source": "https://nmap.org/book/man-port-scanning-techniques.html"
-},
-{
-"id": "svc-version",
-"category": "Service & version",
-"name": "Version detection on ports",
-"what": "Probe open ports to identify service and version.",
-"when": "After a port scan, with the open ports.",
-"cmd": "nmap -sV --version-intensity 5 -p {ports} -oA {outdir}/svc-version {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "1-5 min",
-"notes": "-sV service/version; intensity 0-9 (default 7).",
-"source": "https://nmap.org/book/man-version-detection.html"
-},
-{
-"id": "svc-os-detect",
-"category": "Service & version",
-"name": "OS fingerprint",
-"what": "TCP/IP stack OS detection.",
-"when": "You need an OS guess for a host.",
-"cmd": "nmap -O --osscan-guess -p {ports} -oA {outdir}/svc-os {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "30-90s",
-"notes": "Best with at least one open and one closed port in the list.",
-"source": "https://nmap.org/book/man-os-detection.html"
-},
-{
-"id": "svc-aggressive",
-"category": "Service & version",
-"name": "Aggressive scan (-A)",
-"what": "Version, OS, default scripts and traceroute in one pass.",
-"when": "Single-host deep first pass.",
-"cmd": "nmap -A -T4 -p {ports} -oA {outdir}/svc-aggressive {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "2-8 min",
-"notes": "-A = -sV -O -sC --traceroute.",
-"source": "https://nmap.org/book/man-misc-options.html"
-},
-{
-"id": "nse-default",
-"category": "Nmap scripts",
-"name": "Default scripts",
-"what": "Run the NSE default category on chosen ports.",
-"when": "Cheap extra info after a port scan.",
-"cmd": "nmap -sC -p {ports} -oA {outdir}/nse-default {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "1-3 min",
-"notes": "-sC is --script=default.",
-"source": "https://nmap.org/book/nse-usage.html"
-},
-{
-"id": "nse-safe",
-"category": "Nmap scripts",
-"name": "Safe scripts",
-"what": "Run the NSE safe category (non-intrusive).",
-"when": "Extra enumeration with low impact.",
-"cmd": "nmap -sV --script safe -p {ports} -oA {outdir}/nse-safe {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "2-10 min",
-"notes": "Scripts in 'safe' shouldn't crash services or exploit anything.",
-"source": "https://nmap.org/book/nse-usage.html"
-},
-{
-"id": "nse-discovery",
-"category": "Nmap scripts",
-"name": "Discovery scripts",
-"what": "Run the NSE discovery category.",
-"when": "Learn more about network and service details.",
-"cmd": "nmap -sV --script discovery -p {ports} -oA {outdir}/nse-discovery {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "3-15 min",
-"notes": "Some make many queries (DNS, SMB, HTTP); keep the port list short.",
-"source": "https://nmap.org/book/nse-usage.html"
-},
-{
-"id": "nse-vuln",
-"category": "Nmap scripts",
-"name": "Vuln-check scripts (flagged)",
-"what": "Run NSE vuln-check scripts for known issues. Some are intrusive and can upset fragile services.",
-"when": "Lab targets where you accept active checks.",
-"cmd": "nmap -sV --script vuln -p {ports} -oA {outdir}/nse-vuln {host}",
-"needs": [
-"nmap"
-],
-"risk": "probe",
-"root": false,
-"est": "5-30 min",
-"notes": "The vuln category includes intrusive checks (e.g. DoS-style tests). Use only on lab hosts you're fine disturbing; it checks, it doesn't exploit. For a gentler pass use Safe scripts.",
-"source": "https://nmap.org/book/nse-usage.html"
-},
-{
-"id": "web-whatweb",
-"category": "Web",
-"name": "WhatWeb fingerprint",
-"what": "Identify web server, CMS, frameworks and headers.",
-"when": "First look at any http(s) service.",
-"cmd": "whatweb -a 1 --log-json={outdir}/whatweb.json {url}",
-"needs": [
-"whatweb"
-],
-"risk": "discovery",
-"root": false,
-"est": "5-20s",
-"notes": "-a 1 single request; -a 3 probes more.",
-"source": "https://www.kali.org/tools/whatweb/"
-},
-{
-"id": "web-curl-headers",
-"category": "Web",
-"name": "Response headers",
-"what": "Fetch headers, following redirects; check banner and security headers.",
-"when": "Check server banner, redirects, HSTS/CSP.",
-"cmd": "curl -skI --max-time 15 {url} | tee {outdir}/headers.txt",
-"needs": [
-"curl"
-],
-"risk": "discovery",
-"root": false,
-"est": "<5s",
-"notes": "-k ignore TLS errors; -I HEAD. Doesn't follow redirects, so it never leaves the host you entered.",
-"source": "https://curl.se/docs/manpage.html"
-},
-{
-"id": "web-curl-robots",
-"category": "Web",
-"name": "robots.txt and sitemap",
-"what": "Download robots.txt and sitemap.xml.",
-"when": "Content hints before any directory discovery.",
-"cmd": "curl -sk --max-time 15 {url}/robots.txt -o {outdir}/robots.txt; curl -sk --max-time 15 {url}/sitemap.xml -o {outdir}/sitemap.xml",
-"needs": [
-"curl"
-],
-"risk": "discovery",
-"root": false,
-"est": "<5s",
-"notes": "Enter the URL without a trailing slash. Files may be empty or a 404 page.",
-"source": "https://curl.se/docs/manpage.html"
-},
-{
-"id": "web-nikto",
-"category": "Web",
-"name": "Nikto scan",
-"what": "Check for common web misconfigurations and outdated components.",
-"when": "Lab web target where scanner traffic is fine.",
-"cmd": "nikto -h {url} -o {outdir}/nikto.txt -Format txt",
-"needs": [
-"nikto"
-],
-"risk": "probe",
-"root": false,
-"est": "3-20 min",
-"notes": "Noisy; sends many requests.",
-"source": "https://www.kali.org/tools/nikto/"
-},
-{
-"id": "web-feroxbuster",
-"category": "Web",
-"name": "feroxbuster content discovery",
-"what": "Recursive directory and file discovery.",
-"when": "Mapping a web app's visible paths.",
-"cmd": "feroxbuster -u {url} -w {wordlist} -k -t 20 -d 2 -o {outdir}/feroxbuster.txt",
-"needs": [
-"feroxbuster"
-],
-"risk": "probe",
-"root": false,
-"est": "2-15 min",
-"notes": "-k skip TLS verify; -t threads; -d recursion depth.",
-"source": "https://www.kali.org/tools/feroxbuster/"
-},
-{
-"id": "web-gobuster",
-"category": "Web",
-"name": "gobuster dir",
-"what": "Directory discovery with a chosen wordlist.",
-"when": "Alternative to feroxbuster.",
-"cmd": "gobuster dir -u {url} -w {wordlist} -k -t 20 -o {outdir}/gobuster.txt",
-"needs": [
-"gobuster"
-],
-"risk": "probe",
-"root": false,
-"est": "2-15 min",
-"notes": "-k skip TLS verification.",
-"source": "https://www.kali.org/tools/gobuster/"
-},
-{
-"id": "web-testssl",
-"category": "Web",
-"name": "testssl TLS audit",
-"what": "Test TLS protocols, ciphers, certificate and known TLS flaws.",
-"when": "Any HTTPS or TLS-wrapped service.",
-"cmd": "testssl --quiet --logfile {outdir}/testssl.log --jsonfile {outdir}/testssl.json {host}:{port}",
-"needs": [
-"testssl"
-],
-"risk": "discovery",
-"root": false,
-"est": "1-4 min",
-"notes": "Kali installs it as testssl.",
-"source": "https://www.kali.org/tools/testssl.sh/"
-},
-{
-"id": "smb-nmap-safe",
-"category": "SMB / Windows / AD",
-"name": "SMB info scripts",
-"what": "Query OS, SMB versions and signing without credentials.",
-"when": "Port 445 or 139 is open.",
-"cmd": "nmap -p139,445 --script smb-os-discovery,smb-protocols,smb2-security-mode,smb2-time -oA {outdir}/smb-info {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "20-60s",
-"notes": "Informational scripts only.",
-"source": "https://nmap.org/nsedoc/categories/discovery.html"
-},
-{
-"id": "smb-nxc-sweep",
-"category": "SMB / Windows / AD",
-"name": "NetExec SMB sweep",
-"what": "Hostnames, domain, OS and SMB signing across a range.",
-"when": "Mapping the Windows hosts on a network.",
-"cmd": "netexec smb {target} --log {outdir}/nxc-smb-sweep.log",
-"needs": [
-"netexec"
-],
-"risk": "discovery",
-"root": false,
-"est": "10-60s",
-"notes": "No credentials. Also installed as nxc.",
-"source": "https://www.netexec.wiki/smb-protocol/enumeration"
-},
-{
-"id": "smb-smbclient-list",
-"category": "SMB / Windows / AD",
-"name": "Share list (null session)",
-"what": "List shares anonymously.",
-"when": "Check whether a null session lists shares.",
-"cmd": "smbclient -L //{host} -N | tee {outdir}/smbclient.txt",
-"needs": [
-"smbclient"
-],
-"risk": "probe",
-"root": false,
-"est": "<10s",
-"notes": "-N no password. A refusal is a useful result.",
-"source": "https://www.kali.org/tools/samba/"
-},
-{
-"id": "smb-nxc-null-shares",
-"category": "SMB / Windows / AD",
-"name": "NetExec null-session shares",
-"what": "Check shares via a null session across a range.",
-"when": "Cross-check the smbclient result on many hosts.",
-"cmd": "netexec smb {target} -u '' -p '' --shares --log {outdir}/nxc-null-shares.log",
-"needs": [
-"netexec"
-],
-"risk": "probe",
-"root": false,
-"est": "15-60s",
-"notes": "Empty user and password, one attempt per host. Not a password spray. Tries one empty/default login only; not a guessing attack.",
-"source": "https://www.netexec.wiki/smb-protocol/enumeration/enumerate-shares-and-access"
-},
-{
-"id": "smb-enum4linux-ng",
-"category": "SMB / Windows / AD",
-"name": "enum4linux-ng",
-"what": "Unauthenticated SMB/RPC/LDAP enumeration of users, groups, shares and policy.",
-"when": "Windows host with SMB/RPC reachable.",
-"cmd": "enum4linux-ng -A {host} -oA {outdir}/enum4linux",
-"needs": [
-"enum4linux-ng"
-],
-"risk": "probe",
-"root": false,
-"est": "1-3 min",
-"notes": "-A all simple checks; -oA writes JSON and YAML.",
-"source": "https://github.com/cddmp/enum4linux-ng"
-},
-{
-"id": "ldap-rootdse",
-"category": "SMB / Windows / AD",
-"name": "LDAP anonymous rootDSE",
-"what": "Read the RootDSE anonymously for naming contexts and DC info.",
-"when": "Ports 389/3268 open; identify the domain.",
-"cmd": "ldapsearch -x -H ldap://{host} -s base -b '' -LLL namingContexts defaultNamingContext dnsHostName domainFunctionality | tee {outdir}/ldap-rootdse.txt",
-"needs": [
-"ldapsearch"
-],
-"risk": "discovery",
-"root": false,
-"est": "<5s",
-"notes": "-x anonymous simple bind; base search on the empty DN returns RootDSE.",
-"source": "https://www.kali.org/tools/ldap-utils/"
-},
-{
-"id": "rpc-null",
-"category": "SMB / Windows / AD",
-"name": "rpcclient null session",
-"what": "Query server and domain info over RPC with no credentials.",
-"when": "Port 445/135 reachable.",
-"cmd": "rpcclient -U '' -N {host} -c 'srvinfo;enumdomains;querydominfo' | tee {outdir}/rpcclient.txt",
-"needs": [
-"rpcclient"
-],
-"risk": "probe",
-"root": false,
-"est": "<10s",
-"notes": "Anonymous bind; most modern hosts refuse.",
-"source": "https://www.kali.org/tools/samba/"
-},
-{
-"id": "nbt-scan",
-"category": "SMB / Windows / AD",
-"name": "NetBIOS name scan",
-"what": "Retrieve NetBIOS names across a range.",
-"when": "Quick name mapping, legacy Windows.",
-"cmd": "nbtscan -r {target} | tee {outdir}/nbtscan.txt",
-"needs": [
-"nbtscan"
-],
-"risk": "discovery",
-"root": true,
-"est": "5-30s",
-"notes": "-r uses local UDP port 137 (needs root).",
-"source": "https://www.kali.org/tools/nbtscan/"
-},
-{
-"id": "dns-records",
-"category": "DNS",
-"name": "Core record lookup",
-"what": "Ask a lab DNS server for A, AAAA, MX, NS, TXT and SOA records.",
-"when": "Starting with a lab domain.",
-"cmd": "for t in A AAAA MX NS TXT SOA; do dig @{host} +noall +answer {domain} $t; done | tee {outdir}/dns-records.txt",
-"needs": [
-"dig"
-],
-"risk": "discovery",
-"root": false,
-"est": "<5s",
-"notes": "Host = the lab DNS server. +noall +answer prints only answers.",
-"source": "https://www.kali.org/tools/bind9/"
-},
-{
-"id": "dns-axfr",
-"category": "DNS",
-"name": "Zone transfer attempt",
-"what": "Try an AXFR against the lab DNS server.",
-"when": "Lab domain where transfer testing is allowed.",
-"cmd": "dig AXFR {domain} @{host} | tee {outdir}/axfr.txt",
-"needs": [
-"dig"
-],
-"risk": "probe",
-"root": false,
-"est": "<15s",
-"notes": "A refusal is the expected answer from a healthy server.",
-"source": "https://www.kali.org/tools/bind9/"
-},
-{
-"id": "dns-dnsrecon",
-"category": "DNS",
-"name": "dnsrecon standard",
-"what": "SOA, NS, MX, A, SRV and a zone-transfer check against the lab DNS server.",
-"when": "Domain recon in one tool.",
-"cmd": "dnsrecon -d {domain} -n {host} -t std -j {outdir}/dnsrecon.json",
-"needs": [
-"dnsrecon"
-],
-"risk": "probe",
-"root": false,
-"est": "20-60s",
-"notes": "-n pins the name server to the lab host; -t std includes an AXFR attempt.",
-"source": "https://www.kali.org/tools/dnsrecon/"
-},
-{
-"id": "dns-reverse",
-"category": "DNS",
-"name": "Reverse lookups for a range",
-"what": "PTR lookups for every address in a range.",
-"when": "Name mapping an internal range.",
-"cmd": "nmap -sL -R -oN {outdir}/reverse-dns.txt {target}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "10-60s",
-"notes": "Only PTR queries to your resolver.",
-"source": "https://nmap.org/book/man-host-discovery.html"
-},
-{
-"id": "snmp-walk-public",
-"category": "SNMP",
-"name": "snmpwalk public",
-"what": "Walk the MIB with the default 'public' community.",
-"when": "The host answers SNMP v1/v2c.",
-"cmd": "snmpwalk -v2c -c public {host} | tee {outdir}/snmpwalk.txt",
-"needs": [
-"snmpwalk"
-],
-"risk": "probe",
-"root": false,
-"est": "10-120s",
-"notes": "Output is large; try -v1 if v2c times out. Tries one empty/default login only; not a guessing attack.",
-"source": "https://www.kali.org/tools/snmp/"
-},
-{
-"id": "snmp-nmap",
-"category": "SNMP",
-"name": "SNMP info scripts",
-"what": "Pull sysDescr and device info via SNMP.",
-"when": "UDP/161 open.",
-"cmd": "nmap -sU -p161 --script snmp-info,snmp-sysdescr -oA {outdir}/snmp-nmap {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": true,
-"est": "15-60s",
-"notes": "Uses default community strings only.",
-"source": "https://nmap.org/nsedoc/scripts/snmp-info.html"
-},
-{
-"id": "svc-ssh-audit",
-"category": "Other services",
-"name": "ssh-audit",
-"what": "Audit SSH banner, key exchange, ciphers and host keys.",
-"when": "An SSH port is open.",
-"cmd": "ssh-audit -p {port} {host} | tee {outdir}/ssh-audit.txt",
-"needs": [
-"ssh-audit"
-],
-"risk": "discovery",
-"root": false,
-"est": "<15s",
-"notes": "Protocol negotiation only, no login attempts.",
-"source": "https://www.kali.org/tools/ssh-audit/"
-},
-{
-"id": "svc-ftp-anon",
-"category": "Other services",
-"name": "FTP anonymous check",
-"what": "Check whether anonymous FTP login is allowed.",
-"when": "Port 21 open.",
-"cmd": "nmap -p21 -sV --script ftp-anon,ftp-syst -oA {outdir}/ftp-anon {host}",
-"needs": [
-"nmap"
-],
-"risk": "probe",
-"root": false,
-"est": "15-60s",
-"notes": "ftp-anon tries the anonymous user once.",
-"source": "https://nmap.org/nsedoc/scripts/ftp-anon.html"
-},
-{
-"id": "svc-rdp",
-"category": "Other services",
-"name": "RDP security and NTLM info",
-"what": "RDP encryption/security layers and NTLM host info.",
-"when": "Port 3389 open.",
-"cmd": "nmap -p3389 --script rdp-enum-encryption,rdp-ntlm-info -oA {outdir}/rdp {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "15-45s",
-"notes": "rdp-ntlm-info shows hostname/domain without credentials.",
-"source": "https://nmap.org/nsedoc/scripts/rdp-enum-encryption.html"
-},
-{
-"id": "svc-vnc",
-"category": "Other services",
-"name": "VNC info",
-"what": "Identify VNC version and auth types.",
-"when": "Ports in the 5900 range open.",
-"cmd": "nmap -p {ports} --script vnc-info,vnc-title -oA {outdir}/vnc {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "15-45s",
-"notes": "Enter the VNC ports, e.g. 5900,5901.",
-"source": "https://nmap.org/nsedoc/scripts/vnc-info.html"
-},
-{
-"id": "svc-smtp",
-"category": "Other services",
-"name": "SMTP capabilities",
-"what": "List SMTP commands and NTLM info.",
-"when": "Port 25/465/587 open.",
-"cmd": "nmap -p25,465,587 --script smtp-commands,smtp-ntlm-info -oA {outdir}/smtp {host}",
-"needs": [
-"nmap"
-],
-"risk": "discovery",
-"root": false,
-"est": "15-45s",
-"notes": "Doesn't enumerate users.",
-"source": "https://nmap.org/nsedoc/scripts/smtp-commands.html"
-},
-{
-"id": "wifi-iw-scan",
-"category": "Wi-Fi",
-"name": "iw scan",
-"what": "List nearby access points with channel, signal and security.",
-"when": "Quick look without monitor mode.",
-"cmd": "iw dev {wlan} scan | tee {outdir}/iw-scan.txt",
-"needs": [
-"iw"
-],
-"risk": "discovery",
-"root": true,
-"est": "5-10s",
-"notes": "Sends probe requests. Use airodump-ng or Kismet to stay fully passive. Your adapter sends probe requests (normal Wi-Fi scanning).",
-"source": "https://wireless.docs.kernel.org/en/latest/en/users/documentation/iw.html"
-},
-{
-"id": "wifi-airmon-start",
-"category": "Wi-Fi",
-"name": "Start monitor mode",
-"what": "Put the Alfa into monitor mode.",
-"when": "Before airodump-ng or Kismet.",
-"cmd": "airmon-ng start {wlan} | tee {outdir}/airmon-start.txt",
-"needs": [
-"airmon-ng"
-],
-"risk": "passive",
-"root": true,
-"est": "<10s",
-"notes": "Usually creates <wlan>mon. Doesn't stop NetworkManager unless you run 'airmon-ng check kill'.",
-"source": "https://www.kali.org/tools/aircrack-ng/"
-},
-{
-"id": "wifi-airmon-stop",
-"category": "Wi-Fi",
-"name": "Stop monitor mode",
-"what": "Return the adapter to managed mode.",
-"when": "After a capture.",
-"cmd": "airmon-ng stop {mon}",
-"needs": [
-"airmon-ng"
-],
-"risk": "passive",
-"root": true,
-"est": "<10s",
-"notes": "Give the monitor interface name.",
-"source": "https://www.kali.org/tools/aircrack-ng/"
-},
-{
-"id": "wifi-airodump-all",
-"category": "Wi-Fi",
-"name": "airodump-ng all channels",
-"what": "Passively survey access points and clients on 2.4 and 5 GHz.",
-"when": "Wi-Fi site survey.",
-"cmd": "timeout --foreground {seconds} airodump-ng --band abg --output-format csv,pcap -w {outdir}/airodump-all {mon}",
-"needs": [
-"airodump-ng"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "--band abg covers both bands; -w output prefix.",
-"source": "https://www.aircrack-ng.org/doku.php?id=airodump-ng"
-},
-{
-"id": "wifi-airodump-channel",
-"category": "Wi-Fi",
-"name": "airodump-ng one channel",
-"what": "Capture one channel for full coverage of it.",
-"when": "Focus on a specific access point's channel.",
-"cmd": "timeout --foreground {seconds} airodump-ng -c {channel} --output-format csv,pcap -w {outdir}/airodump-ch {mon}",
-"needs": [
-"airodump-ng"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "-c locks the channel.",
-"source": "https://www.aircrack-ng.org/doku.php?id=airodump-ng"
-},
-{
-"id": "wifi-kismet",
-"category": "Wi-Fi",
-"name": "Kismet survey",
-"what": "Run Kismet on the monitor interface for a set time (uses GPS if gpsd has a fix).",
-"when": "Longer survey or wardrive, with the web UI.",
-"cmd": "timeout --foreground {seconds} kismet -c {mon} -p {outdir} -t wifi-survey --no-ncurses",
-"needs": [
-"kismet"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "-c source; -p log folder; -t log title. Web UI at http://localhost:2501.",
-"source": "https://www.kismetwireless.net/docs/readme/"
-},
-{
-"id": "bt-bluetoothctl-scan",
-"category": "Bluetooth",
-"name": "bluetoothctl scan",
-"what": "Scan for nearby classic and BLE devices.",
-"when": "First Bluetooth survey.",
-"cmd": "bluetoothctl --timeout {seconds} scan on | tee {outdir}/bluetoothctl-scan.txt",
-"needs": [
-"bluetoothctl"
-],
-"risk": "discovery",
-"root": false,
-"est": "as set",
-"notes": "Uses the default adapter; btmgmt lets you pick one.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "bt-btmgmt-find",
-"category": "Bluetooth",
-"name": "btmgmt find",
-"what": "Inquiry plus LE scan with RSSI and flags.",
-"when": "Alternative scan on a chosen adapter.",
-"cmd": "btmgmt --index {hci} find | tee {outdir}/btmgmt-find.txt",
-"needs": [
-"btmgmt"
-],
-"risk": "discovery",
-"root": true,
-"est": "10-20s",
-"notes": "Add -l for LE only, -b for classic only.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "bt-hcitool-scan",
-"category": "Bluetooth",
-"name": "Classic inquiry (hcitool)",
-"what": "Classic Bluetooth inquiry listing names.",
-"when": "Fallback; hcitool is deprecated.",
-"cmd": "hcitool -i {hci} scan --flush | tee {outdir}/hcitool-scan.txt",
-"needs": [
-"hcitool"
-],
-"risk": "discovery",
-"root": false,
-"est": "10-20s",
-"notes": "May be missing on newer installs; prefer bluetoothctl or btmgmt.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "bt-hcitool-lescan",
-"category": "Bluetooth",
-"name": "BLE scan (hcitool)",
-"what": "BLE advertisement scan.",
-"when": "Fallback; hcitool is deprecated.",
-"cmd": "timeout {seconds} hcitool -i {hci} lescan | tee {outdir}/hcitool-lescan.txt",
-"needs": [
-"hcitool"
-],
-"risk": "discovery",
-"root": true,
-"est": "as set",
-"notes": "Add --duplicates to see repeated adverts.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "bt-sdptool",
-"category": "Bluetooth",
-"name": "SDP service browse",
-"what": "List SDP services on a classic device.",
-"when": "After finding a classic device you own.",
-"cmd": "sdptool browse {bdaddr} | tee {outdir}/sdp.txt",
-"needs": [
-"sdptool"
-],
-"risk": "probe",
-"root": false,
-"est": "5-20s",
-"notes": "Connects to the device, so it must be on your Mine tab. sdptool is deprecated.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "bt-gatt-list",
-"category": "Bluetooth",
-"name": "Read GATT of a device",
-"what": "Connect and list GATT services and characteristics.",
-"when": "Inspect one BLE device you own.",
-"cmd": "(printf 'connect %s\\n' {bdaddr}; sleep 8; printf 'menu gatt\\nlist-attributes %s\\nback\\ndisconnect %s\\nquit\\n' {bdaddr} {bdaddr}; sleep 2) | bluetoothctl | tee {outdir}/gatt.txt",
-"needs": [
-"bluetoothctl"
-],
-"risk": "probe",
-"root": false,
-"est": "15-30s",
-"notes": "Read-only listing; fails if pairing is required. Never writes characteristics.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "bt-btmon",
-"category": "Bluetooth",
-"name": "HCI capture (btmon)",
-"what": "Capture all HCI traffic from local adapters to a btsnoop file.",
-"when": "Debugging scans and connections.",
-"cmd": "timeout {seconds} btmon -w {outdir}/btmon.btsnoop",
-"needs": [
-"btmon"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "Open the btsnoop file in Wireshark.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "bt-sniffle-adv",
-"category": "Bluetooth",
-"name": "Sniffle advertising capture",
-"what": "Sniff BLE advertisements to pcap with the CC2652P.",
-"when": "BLE survey without connecting.",
-"cmd": "timeout {seconds} python3 /opt/sniffle/python_cli/sniff_receiver.py -s /dev/ttyUSB0 -a -o {outdir}/ble-adv.pcap",
-"needs": [
-"python3"
-],
-"risk": "passive",
-"root": false,
-"est": "as set",
-"notes": "-a advertising only; -o pcap. Add -c 37|38|39 to pin a channel, -e for extended adverts. Assumes the Sniffle dongle is /dev/ttyUSB0 and Sniffle is in /opt/sniffle (setup puts it there); check with ls /dev/ttyUSB*.",
-"source": "https://github.com/nccgroup/Sniffle"
-},
-{
-"id": "bt-sniffle-target",
-"category": "Bluetooth",
-"name": "Sniffle one device",
-"what": "Capture adverts from one advertiser address.",
-"when": "Follow a specific beacon.",
-"cmd": "timeout {seconds} python3 /opt/sniffle/python_cli/sniff_receiver.py -s /dev/ttyUSB0 -a -m {bdaddr} -o {outdir}/ble-device.pcap",
-"needs": [
-"python3"
-],
-"risk": "passive",
-"root": false,
-"est": "as set",
-"notes": "-m filters by advertiser MAC; add -r -70 to drop weak signals. Assumes the Sniffle dongle is /dev/ttyUSB0 and Sniffle is in /opt/sniffle (setup puts it there); check with ls /dev/ttyUSB*.",
-"source": "https://github.com/nccgroup/Sniffle"
-},
-{
-"id": "sdr-rtl433",
-"category": "SDR / RF receive",
-"name": "rtl_433 decode",
-"what": "Decode ISM-band sensor transmissions to JSON.",
-"when": "Survey 315/433/868/915 MHz devices.",
-"cmd": "rtl_433 -f {freq}M -M time:iso -M level -T {seconds} -F json:{outdir}/rtl433.json",
-"needs": [
-"rtl_433"
-],
-"risk": "passive",
-"root": false,
-"est": "as set",
-"notes": "-f centre frequency; -T run time; -F json:file output.",
-"source": "https://github.com/merbanan/rtl_433"
-},
-{
-"id": "sdr-rtl-power",
-"category": "SDR / RF receive",
-"name": "rtl_power sweep 400-470 MHz",
-"what": "Wideband power sweep to CSV.",
-"when": "Find active frequencies in UHF.",
-"cmd": "rtl_power -f 400M:470M:25k -i 10 -e {seconds}s -g 40 {outdir}/rtl_power.csv",
-"needs": [
-"rtl_power"
-],
-"risk": "passive",
-"root": false,
-"est": "as set",
-"notes": "-f lower:upper:bin; -i integration; -e exit time; -g gain.",
-"source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr"
-},
-{
-"id": "sdr-readsb",
-"category": "SDR / RF receive",
-"name": "ADS-B aircraft (readsb)",
-"what": "Receive 1090 MHz ADS-B aircraft data.",
-"when": "Aircraft survey.",
-"cmd": "mkdir -p {outdir}/adsb && timeout {seconds} readsb --device-type rtlsdr --interactive --write-json {outdir}/adsb",
-"needs": [
-"readsb"
-],
-"risk": "passive",
-"root": false,
-"est": "as set",
-"notes": "Stop the dashboard's plane tracker first if it's using the dongle.",
-"source": "https://github.com/wiedehopf/readsb"
-},
-{
-"id": "sdr-rtl-test",
-"category": "SDR / RF receive",
-"name": "RTL-SDR health check",
-"what": "Confirm the dongle is detected and stable.",
-"when": "Before a capture.",
-"cmd": "timeout 10 rtl_test -t 2>&1 | tee {outdir}/rtl_test.txt",
-"needs": [
-"rtl_test"
-],
-"risk": "passive",
-"root": false,
-"est": "<10s",
-"notes": "-t tests tuner range and gains.",
-"source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr"
-},
-{
-"id": "traffic-tcpdump-ring",
-"category": "Traffic capture",
-"name": "tcpdump ring buffer",
-"what": "Capture packets to rotating pcap files.",
-"when": "Long capture with bounded disk use.",
-"cmd": "timeout {seconds} tcpdump -i {iface} -nn -s 0 -C 100 -W 10 -w {outdir}/cap.pcap",
-"needs": [
-"tcpdump"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "-C 100 MB per file; -W 10 files; -nn no name lookups.",
-"source": "https://www.tcpdump.org/manpages/tcpdump.1.html"
-},
-{
-"id": "traffic-tcpdump-host",
-"category": "Traffic capture",
-"name": "tcpdump one host",
-"what": "Capture traffic to or from one host.",
-"when": "Focused capture during testing.",
-"cmd": "timeout {seconds} tcpdump -i {iface} -nn -s 0 -w {outdir}/host.pcap host {host}",
-"needs": [
-"tcpdump"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "BPF filter 'host'.",
-"source": "https://www.tcpdump.org/manpages/tcpdump.1.html"
-},
-{
-"id": "traffic-tshark-ring",
-"category": "Traffic capture",
-"name": "tshark ring buffer",
-"what": "Capture with the Wireshark engine into rotating files.",
-"when": "A capture you'll open in Wireshark.",
-"cmd": "tshark -i {iface} -a duration:{seconds} -b filesize:102400 -b files:10 -w {outdir}/tshark.pcapng",
-"needs": [
-"tshark"
-],
-"risk": "passive",
-"root": true,
-"est": "as set",
-"notes": "-a stop condition; -b ring buffer (size in kB).",
-"source": "https://www.wireshark.org/docs/man-pages/tshark.html"
-},
-{
-"id": "box-ip-addr",
-"category": "Box info",
-"name": "Interfaces and addresses",
-"what": "Show interface addresses and link state.",
-"when": "Baseline before scanning.",
-"cmd": "ip -br addr | tee {outdir}/ip-addr.txt",
-"needs": [
-"ip"
-],
-"risk": "passive",
-"root": false,
-"est": "<1s",
-"notes": "-br brief output.",
-"source": "https://man7.org/linux/man-pages/man8/ip.8.html"
-},
-{
-"id": "box-ip-route",
-"category": "Box info",
-"name": "Routes and neighbours",
-"what": "IPv4/IPv6 routes and ARP/ND neighbours.",
-"when": "Understand the gateway and nearby hosts.",
-"cmd": "(ip route; ip -6 route; ip neigh) | tee {outdir}/ip-route.txt",
-"needs": [
-"ip"
-],
-"risk": "passive",
-"root": false,
-"est": "<1s",
-"notes": "",
-"source": "https://man7.org/linux/man-pages/man8/ip.8.html"
-},
-{
-"id": "box-nmcli",
-"category": "Box info",
-"name": "NetworkManager status",
-"what": "Device status and visible Wi-Fi networks.",
-"when": "Check which interfaces are up.",
-"cmd": "(nmcli device status; nmcli device wifi list) | tee {outdir}/nmcli.txt",
-"needs": [
-"nmcli"
-],
-"risk": "discovery",
-"root": false,
-"est": "<10s",
-"notes": "The wifi list triggers a scan. Your adapter sends probe requests (normal Wi-Fi scanning).",
-"source": "https://www.kali.org/tools/network-manager/"
-},
-{
-"id": "box-lsusb",
-"category": "Box info",
-"name": "USB device tree",
-"what": "List attached USB devices.",
-"when": "Verify the radios are detected.",
-"cmd": "lsusb -t | tee {outdir}/lsusb.txt",
-"needs": [
-"lsusb"
-],
-"risk": "passive",
-"root": false,
-"est": "<1s",
-"notes": "-t tree view with drivers.",
-"source": "https://www.kali.org/tools/usbutils/"
-},
-{
-"id": "box-hci-info",
-"category": "Box info",
-"name": "Bluetooth adapter info",
-"what": "Show the adapter's state and capabilities.",
-"when": "Before Bluetooth scans.",
-"cmd": "btmgmt --index {hci} info | tee {outdir}/btmgmt-info.txt",
-"needs": [
-"btmgmt"
-],
-"risk": "passive",
-"root": true,
-"est": "<2s",
-"notes": "Address, supported and current settings.",
-"source": "https://www.kali.org/tools/bluez/"
-},
-{
-"id": "box-gps",
-"category": "Box info",
-"name": "GPS fix check",
-"what": "Read a few GPS messages from gpsd.",
-"when": "Before wardriving or Kismet GPS logging.",
-"cmd": "timeout 15 gpspipe -w -n 10 | tee {outdir}/gps.json",
-"needs": [
-"gpspipe"
-],
-"risk": "passive",
-"root": false,
-"est": "<15s",
-"notes": "Look for TPV with mode 2 or 3.",
-"source": "https://gpsd.gitlab.io/gpsd/gpspipe.html"
-}
-],
-"chains": [
-{
-"id": "chain-new-network",
-"name": "New network triage",
-"what": "Box baseline, find hosts, quick ports, versions, then fingerprint one web service.",
-"steps": [
-"box-ip-addr",
-"box-ip-route",
-"disc-ping-sweep",
-"ports-quick",
-"svc-version",
-"web-whatweb",
-"web-curl-headers"
-]
-},
-{
-"id": "chain-windows-host",
-"name": "Windows host enum",
-"what": "Unauthenticated enumeration of one Windows/AD host.",
-"steps": [
-"ports-top1000",
-"smb-nmap-safe",
-"smb-smbclient-list",
-"smb-enum4linux-ng",
-"rpc-null",
-"ldap-rootdse",
-"svc-rdp"
-]
-},
-{
-"id": "chain-web-first-look",
-"name": "Web app first look",
-"what": "Fingerprint and map one web service.",
-"steps": [
-"web-curl-headers",
-"web-whatweb",
-"web-curl-robots",
-"web-testssl",
-"web-nikto",
-"web-feroxbuster"
-]
-},
-{
-"id": "chain-domain-recon",
-"name": "Lab DNS recon",
-"what": "Records, dnsrecon and a zone-transfer check against the lab DNS server.",
-"steps": [
-"dns-records",
-"dns-dnsrecon",
-"dns-axfr"
-]
-},
-{
-"id": "chain-ble-survey",
-"name": "BLE survey",
-"what": "Check the radios, scan, capture adverts, then read a device you own.",
-"steps": [
-"box-lsusb",
-"box-hci-info",
-"bt-bluetoothctl-scan",
-"bt-btmgmt-find",
-"bt-sniffle-adv",
-"bt-gatt-list"
-]
-},
-{
-"id": "chain-wifi-survey",
-"name": "Wi-Fi survey",
-"what": "Passive survey with logging; monitor mode is switched off at the end.",
-"steps": [
-"box-lsusb",
-"box-gps",
-"wifi-iw-scan",
-"wifi-airmon-start",
-"wifi-airodump-all",
-"wifi-kismet",
-"wifi-airmon-stop"
-]
-},
-{
-"id": "chain-rf-survey",
-"name": "RF receive survey",
-"what": "Check the SDR, sweep UHF, then decode ISM sensors.",
-"steps": [
-"sdr-rtl-test",
-"sdr-rtl-power",
-"sdr-rtl433"
-]
-},
-{
-"id": "chain-service-sweep",
-"name": "Service deep-dive",
-"what": "All TCP ports, versions, OS, then safe scripts and common service checks.",
-"steps": [
-"ports-full-tcp",
-"svc-version",
-"svc-os-detect",
-"nse-default",
-"nse-safe",
-"svc-ssh-audit",
-"snmp-nmap",
-"snmp-walk-public"
-]
-}
-]
+ "recipes": [
+  {
+   "id": "disc-ping-sweep",
+   "category": "Finding devices on the network",
+   "name": "nmap ping sweep",
+   "what": "Find live hosts with ping (ICMP echo) and TCP connection probes, without scanning ports.",
+   "when": "First step on a new subnet.",
+   "cmd": "nmap -sn -PE -PS22,80,443,445 -PA80,443 -oA {outdir}/hosts-sweep {target}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "10-60s",
+   "notes": "-sn: find hosts only, skip the port scan. -PE: ping (ICMP echo). -PS/-PA: send TCP probes that start a connection (SYN) or acknowledge one (ACK) on the listed ports. On your own local network nmap uses ARP (address lookups) automatically.",
+   "source": "https://nmap.org/book/man-host-discovery.html"
+  },
+  {
+   "id": "disc-arp-scan",
+   "category": "Finding devices on the network",
+   "name": "ARP scan",
+   "what": "Sweep a range on your own network segment and list each IP address, hardware (MAC) address and vendor.",
+   "when": "The target range is on the box's own local network segment, where this is the most reliable discovery.",
+   "cmd": "arp-scan --interface={iface} --retry=2 {target} | tee {outdir}/arp-scan.txt",
+   "needs": [
+    "arp-scan"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "5-15s",
+   "notes": "--interface: which network card to use. --retry=2: try each address up to two times. The range is the engagement range you enter, not --localnet, which could reach past scope.",
+   "source": "https://www.kali.org/tools/arp-scan/"
+  },
+  {
+   "id": "disc-list-targets",
+   "category": "Finding devices on the network",
+   "name": "List targets (sends no probes)",
+   "what": "Expand a CIDR range (an address block like 10.0.0.0/24) and look up names without touching the targets.",
+   "when": "Sanity-check scope before scanning.",
+   "cmd": "nmap -sL -R -oN {outdir}/target-list.txt {target}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<10s",
+   "notes": "-sL: only list targets; it sends name lookups (DNS queries) and nothing to the targets. -R: always do reverse lookups (address to name).",
+   "source": "https://nmap.org/book/man-host-discovery.html"
+  },
+  {
+   "id": "disc-fping",
+   "category": "Finding devices on the network",
+   "name": "fping sweep",
+   "what": "Fast ping sweep that prints only the hosts that answer.",
+   "when": "Quick list of live hosts to feed other tools.",
+   "cmd": "fping -a -g {target} 2>/dev/null | tee {outdir}/fping-alive.txt",
+   "needs": [
+    "fping"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "10-30s",
+   "notes": "-a: show only hosts that are alive. -g: generate the addresses from a CIDR range (an address block).",
+   "source": "https://www.kali.org/tools/fping/"
+  },
+  {
+   "id": "disc-netdiscover-passive",
+   "category": "Finding devices on the network",
+   "name": "netdiscover passive listen",
+   "what": "Listen for ARP traffic (address lookups on the local network) to learn hosts without sending anything.",
+   "when": "Quiet mapping of a network segment.",
+   "cmd": "timeout {seconds} netdiscover -p -i {iface} -P | tee {outdir}/netdiscover-passive.txt",
+   "needs": [
+    "netdiscover"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-p: passive mode, sends no ARP requests. -P: print in a script-friendly format. timeout ends the run after the set seconds.",
+   "source": "https://www.kali.org/tools/netdiscover/"
+  },
+  {
+   "id": "ports-quick",
+   "category": "Port scanning",
+   "name": "Quick scan of the top 100 TCP ports",
+   "what": "Fast scan of nmap's 100 most common TCP ports.",
+   "when": "Fast first look at a host or small range.",
+   "cmd": "nmap -F -T4 --open -oA {outdir}/ports-quick {target}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "10-60s",
+   "notes": "-F: fast mode, top 100 ports only. --open: show only open ports. -T4: faster timing.",
+   "source": "https://nmap.org/book/man-port-specification.html"
+  },
+  {
+   "id": "ports-top1000",
+   "category": "Port scanning",
+   "name": "Top 1000 TCP ports (half-open scan)",
+   "what": "nmap's default half-open scan of the 1000 most common TCP ports.",
+   "when": "Standard scan after finding live hosts.",
+   "cmd": "nmap -sS -T4 --open -oA {outdir}/ports-top1000 {target}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "1-5 min/host",
+   "notes": "-sS: half-open scan (starts a connection but never finishes it). The default port list is the top 1000.",
+   "source": "https://nmap.org/book/man-port-scanning-techniques.html"
+  },
+  {
+   "id": "ports-full-tcp",
+   "category": "Port scanning",
+   "name": "All 65535 TCP ports",
+   "what": "Scan every TCP port on one host.",
+   "when": "Thorough follow-up on a single host.",
+   "cmd": "nmap -p- -sS -T4 --min-rate 1000 --open -oA {outdir}/ports-full {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "2-20 min",
+   "notes": "-p-: all ports. --min-rate 1000: send at least 1000 packets per second (lower it on fragile links).",
+   "source": "https://nmap.org/book/man-port-specification.html"
+  },
+  {
+   "id": "ports-udp-top",
+   "category": "Port scanning",
+   "name": "Top 100 UDP ports",
+   "what": "Scan the 100 most common UDP ports.",
+   "when": "Looking for DNS (name lookups), SNMP (network device monitoring), NTP (time sync), TFTP (simple file transfer) and similar.",
+   "cmd": "nmap -sU --top-ports 100 --open -T4 -oA {outdir}/ports-udp {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "5-20 min",
+   "notes": "UDP scans are slow. Results marked open|filtered stay uncertain until you run version detection (-sV).",
+   "source": "https://nmap.org/book/man-port-scanning-techniques.html"
+  },
+  {
+   "id": "ports-stealth-timing",
+   "category": "Port scanning",
+   "name": "Low-and-slow half-open scan",
+   "what": "Half-open scan with gentle timing and few retries to keep noise down.",
+   "when": "Fragile devices or networks that react to fast scans.",
+   "cmd": "nmap -sS -Pn -T2 --max-retries 1 --scan-delay 100ms --open -oA {outdir}/ports-slow {target}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "10-60 min",
+   "notes": "-T2: polite timing. --scan-delay: pause between probes. -Pn: skip the check that the host is up.",
+   "source": "https://nmap.org/book/man-performance.html"
+  },
+  {
+   "id": "ports-connect-noroot",
+   "category": "Port scanning",
+   "name": "TCP connect scan (no root needed)",
+   "what": "Scan by making full connections, so it works without administrator rights.",
+   "when": "Running without root.",
+   "cmd": "nmap -sT -Pn -T4 --open -oA {outdir}/ports-connect {target}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "2-10 min",
+   "notes": "-sT: complete full connections using the operating system. It shows up in target logs more than the half-open scan (-sS).",
+   "source": "https://nmap.org/book/man-port-scanning-techniques.html"
+  },
+  {
+   "id": "svc-version",
+   "category": "Service and version detection",
+   "name": "Version detection on open ports",
+   "what": "Probe open ports to identify the service and its version.",
+   "when": "After a port scan, using the open ports it found.",
+   "cmd": "nmap -sV --version-intensity 5 -p {ports} -oA {outdir}/svc-version {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "-sV: detect service versions. --version-intensity 5: how hard to probe, on a 0 to 9 scale (the default is 7).",
+   "source": "https://nmap.org/book/man-version-detection.html"
+  },
+  {
+   "id": "svc-os-detect",
+   "category": "Service and version detection",
+   "name": "Operating system guess",
+   "what": "Guess the operating system from how its network stack responds.",
+   "when": "You need to know what operating system a host runs.",
+   "cmd": "nmap -O --osscan-guess -p {ports} -oA {outdir}/svc-os {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "30-90s",
+   "notes": "-O: detect the operating system. --osscan-guess: give a best guess when unsure. Works best with at least one open and one closed port in the list.",
+   "source": "https://nmap.org/book/man-os-detection.html"
+  },
+  {
+   "id": "svc-aggressive",
+   "category": "Service and version detection",
+   "name": "Aggressive scan (-A)",
+   "what": "Run version detection, OS guess, default scripts and route tracing in one pass.",
+   "when": "A deep first pass on a single host.",
+   "cmd": "nmap -A -T4 -p {ports} -oA {outdir}/svc-aggressive {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "2-8 min",
+   "notes": "-A: shorthand for -sV (versions), -O (operating system), -sC (default scripts) and --traceroute (map the network route).",
+   "source": "https://nmap.org/book/man-misc-options.html"
+  },
+  {
+   "id": "nse-default",
+   "category": "nmap built-in scripts",
+   "name": "Default scripts",
+   "what": "Run nmap's built-in default scripts (NSE) on chosen ports.",
+   "when": "Cheap extra information after a port scan.",
+   "cmd": "nmap -sC -p {ports} -oA {outdir}/nse-default {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "1-3 min",
+   "notes": "-sC: same as --script=default, the standard set of nmap scripts.",
+   "source": "https://nmap.org/book/nse-usage.html"
+  },
+  {
+   "id": "nse-safe",
+   "category": "nmap built-in scripts",
+   "name": "Safe scripts",
+   "what": "Run nmap's built-in scripts in the non-intrusive 'safe' group.",
+   "when": "Extra enumeration with low impact.",
+   "cmd": "nmap -sV --script safe -p {ports} -oA {outdir}/nse-safe {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "2-10 min",
+   "notes": "Scripts in the 'safe' group should not crash services or exploit anything. -sV: detect service versions first.",
+   "source": "https://nmap.org/book/nse-usage.html"
+  },
+  {
+   "id": "nse-discovery",
+   "category": "nmap built-in scripts",
+   "name": "Discovery scripts",
+   "what": "Run nmap's built-in scripts that gather network and service details.",
+   "when": "Learn more about network and service details.",
+   "cmd": "nmap -sV --script discovery -p {ports} -oA {outdir}/nse-discovery {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "3-15 min",
+   "notes": "Some scripts send many queries (DNS, SMB file sharing, HTTP), so keep the port list short. -sV: detect service versions.",
+   "source": "https://nmap.org/book/nse-usage.html"
+  },
+  {
+   "id": "nse-vuln",
+   "category": "nmap built-in scripts",
+   "name": "Vulnerability-check scripts (flagged)",
+   "what": "Run nmap's built-in checks for known vulnerabilities; some are intrusive and can upset fragile services.",
+   "when": "Lab targets where you accept active checks.",
+   "cmd": "nmap -sV --script vuln -p {ports} -oA {outdir}/nse-vuln {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "5-30 min",
+   "notes": "The vuln group includes intrusive checks, such as tests that can cause denial of service. Use only on lab hosts you are fine disturbing; it checks and does not exploit. For a gentler pass use Safe scripts.",
+   "source": "https://nmap.org/book/nse-usage.html"
+  },
+  {
+   "id": "web-whatweb",
+   "category": "Web servers",
+   "name": "WhatWeb fingerprint",
+   "what": "Identify the web server, CMS (content management system), frameworks and headers.",
+   "when": "First look at any web (http or https) service.",
+   "cmd": "whatweb -a 1 --log-json={outdir}/whatweb.json {url}",
+   "needs": [
+    "whatweb"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "5-20s",
+   "notes": "-a 1: aggression level 1, a single request. -a 3: level 3, probes more.",
+   "source": "https://www.kali.org/tools/whatweb/"
+  },
+  {
+   "id": "web-curl-headers",
+   "category": "Web servers",
+   "name": "Response headers",
+   "what": "Fetch the response headers to see the server banner and security headers.",
+   "when": "Check the server banner, redirects, HSTS and CSP (browser security policies).",
+   "cmd": "curl -skI --max-time 15 {url} | tee {outdir}/headers.txt",
+   "needs": [
+    "curl"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "<5s",
+   "notes": "-s: quiet. -k: ignore certificate errors. -I: ask for headers only. It does not follow redirects, so it never leaves the host you entered.",
+   "source": "https://curl.se/docs/manpage.html"
+  },
+  {
+   "id": "web-curl-robots",
+   "category": "Web servers",
+   "name": "robots.txt and sitemap",
+   "what": "Download robots.txt and sitemap.xml.",
+   "when": "Content hints before any directory discovery.",
+   "cmd": "curl -sk --max-time 15 {url}/robots.txt -o {outdir}/robots.txt; curl -sk --max-time 15 {url}/sitemap.xml -o {outdir}/sitemap.xml",
+   "needs": [
+    "curl"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "<5s",
+   "notes": "Enter the URL without a trailing slash. The files may be empty or a 404 (not found) page.",
+   "source": "https://curl.se/docs/manpage.html"
+  },
+  {
+   "id": "web-nikto",
+   "category": "Web servers",
+   "name": "nikto scan",
+   "what": "Check for common web misconfigurations and outdated components.",
+   "when": "Lab web target where scanner traffic is fine.",
+   "cmd": "nikto -h {url} -o {outdir}/nikto.txt -Format txt",
+   "needs": [
+    "nikto"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "3-20 min",
+   "notes": "Noisy: it sends many requests. -h: target. -o and -Format txt: save results as plain text.",
+   "source": "https://www.kali.org/tools/nikto/"
+  },
+  {
+   "id": "web-feroxbuster",
+   "category": "Web servers",
+   "name": "feroxbuster content discovery",
+   "what": "Recursively find hidden directories and files.",
+   "when": "Mapping the visible paths of a web app.",
+   "cmd": "feroxbuster -u {url} -w {wordlist} -k -t 20 -d 2 -o {outdir}/feroxbuster.txt",
+   "needs": [
+    "feroxbuster"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "2-15 min",
+   "notes": "-k: skip certificate checks. -t 20: 20 parallel threads. -d 2: go two directory levels deep.",
+   "source": "https://www.kali.org/tools/feroxbuster/"
+  },
+  {
+   "id": "web-gobuster",
+   "category": "Web servers",
+   "name": "gobuster directory discovery",
+   "what": "Find directories using a chosen wordlist.",
+   "when": "Alternative to feroxbuster.",
+   "cmd": "gobuster dir -u {url} -w {wordlist} -k -t 20 -o {outdir}/gobuster.txt",
+   "needs": [
+    "gobuster"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "2-15 min",
+   "notes": "dir: directory mode. -k: skip certificate checks. -t 20: 20 parallel threads.",
+   "source": "https://www.kali.org/tools/gobuster/"
+  },
+  {
+   "id": "web-testssl",
+   "category": "Web servers",
+   "name": "testssl encryption audit",
+   "what": "Test TLS (web encryption) protocols, ciphers, the certificate and known TLS flaws.",
+   "when": "Any HTTPS or other TLS-protected service.",
+   "cmd": "testssl --quiet --logfile {outdir}/testssl.log --jsonfile {outdir}/testssl.json {host}:{port}",
+   "needs": [
+    "testssl"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "1-4 min",
+   "notes": "Kali installs it as testssl. --quiet: less console output.",
+   "source": "https://www.kali.org/tools/testssl.sh/"
+  },
+  {
+   "id": "smb-nmap-safe",
+   "category": "Windows file sharing and Active Directory",
+   "name": "SMB info scripts",
+   "what": "Query the OS, SMB (Windows file sharing) versions and signing without credentials.",
+   "when": "Port 445 or 139 is open.",
+   "cmd": "nmap -p139,445 --script smb-os-discovery,smb-protocols,smb2-security-mode,smb2-time -oA {outdir}/smb-info {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "20-60s",
+   "notes": "Informational scripts only. -p139,445: scan only those two ports.",
+   "source": "https://nmap.org/nsedoc/categories/discovery.html"
+  },
+  {
+   "id": "smb-nxc-sweep",
+   "category": "Windows file sharing and Active Directory",
+   "name": "NetExec SMB sweep",
+   "what": "Show hostnames, domain, OS and SMB (Windows file sharing) signing across a range.",
+   "when": "Mapping the Windows hosts on a network.",
+   "cmd": "netexec smb {target} --log {outdir}/nxc-smb-sweep.log",
+   "needs": [
+    "netexec"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "10-60s",
+   "notes": "No credentials used. NetExec is also installed as nxc. --log: save output to a file.",
+   "source": "https://www.netexec.wiki/smb-protocol/enumeration"
+  },
+  {
+   "id": "smb-smbclient-list",
+   "category": "Windows file sharing and Active Directory",
+   "name": "Share list (null session)",
+   "what": "List SMB (Windows file sharing) shares anonymously.",
+   "when": "Check whether a null session (login with no username or password) lists shares.",
+   "cmd": "smbclient -L //{host} -N | tee {outdir}/smbclient.txt",
+   "needs": [
+    "smbclient"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "<10s",
+   "notes": "-L: list shares. -N: no password. A refusal is a useful result.",
+   "source": "https://www.kali.org/tools/samba/"
+  },
+  {
+   "id": "smb-nxc-null-shares",
+   "category": "Windows file sharing and Active Directory",
+   "name": "NetExec null-session shares",
+   "what": "Check shares across a range using a null session (login with no username or password).",
+   "when": "Cross-check the smbclient result on many hosts.",
+   "cmd": "netexec smb {target} -u '' -p '' --shares --log {outdir}/nxc-null-shares.log",
+   "needs": [
+    "netexec"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "15-60s",
+   "notes": "Empty user and password, one attempt per host. Not a password spray or a guessing attack.",
+   "source": "https://www.netexec.wiki/smb-protocol/enumeration/enumerate-shares-and-access"
+  },
+  {
+   "id": "smb-enum4linux-ng",
+   "category": "Windows file sharing and Active Directory",
+   "name": "enum4linux-ng",
+   "what": "List users, groups, shares and policy from a Windows host without logging in, using SMB (file sharing), RPC (remote procedure calls) and LDAP (directory lookups).",
+   "when": "Windows host with SMB or RPC reachable.",
+   "cmd": "enum4linux-ng -A {host} -oA {outdir}/enum4linux",
+   "needs": [
+    "enum4linux-ng"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "1-3 min",
+   "notes": "-A: run all the basic checks. -oA: write results as JSON and YAML files.",
+   "source": "https://github.com/cddmp/enum4linux-ng"
+  },
+  {
+   "id": "ldap-rootdse",
+   "category": "Windows file sharing and Active Directory",
+   "name": "LDAP anonymous rootDSE",
+   "what": "Read the LDAP (directory lookup) rootDSE anonymously for naming contexts and domain controller details.",
+   "when": "Ports 389 or 3268 are open and you need to identify the domain.",
+   "cmd": "ldapsearch -x -H ldap://{host} -s base -b '' -LLL namingContexts defaultNamingContext dnsHostName domainFunctionality | tee {outdir}/ldap-rootdse.txt",
+   "needs": [
+    "ldapsearch"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "<5s",
+   "notes": "-x: anonymous simple login. -s base -b '': search only the empty root entry, which returns the rootDSE.",
+   "source": "https://www.kali.org/tools/ldap-utils/"
+  },
+  {
+   "id": "rpc-null",
+   "category": "Windows file sharing and Active Directory",
+   "name": "rpcclient null session",
+   "what": "Query server and domain info over RPC (remote procedure calls) with no credentials.",
+   "when": "Port 445 or 135 is reachable.",
+   "cmd": "rpcclient -U '' -N {host} -c 'srvinfo;enumdomains;querydominfo' | tee {outdir}/rpcclient.txt",
+   "needs": [
+    "rpcclient"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "<10s",
+   "notes": "-U '' -N: anonymous login with no password. Most modern hosts refuse it.",
+   "source": "https://www.kali.org/tools/samba/"
+  },
+  {
+   "id": "nbt-scan",
+   "category": "Windows file sharing and Active Directory",
+   "name": "NetBIOS name scan",
+   "what": "Get NetBIOS names (older Windows computer names) across a range.",
+   "when": "Quick name mapping on older Windows networks.",
+   "cmd": "nbtscan -r {target} | tee {outdir}/nbtscan.txt",
+   "needs": [
+    "nbtscan"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "5-30s",
+   "notes": "-r: use local UDP port 137 (needs root).",
+   "source": "https://www.kali.org/tools/nbtscan/"
+  },
+  {
+   "id": "dns-records",
+   "category": "DNS (name lookups)",
+   "name": "Core record lookup",
+   "what": "Ask a lab DNS server for its A, AAAA, MX, NS, TXT and SOA records (addresses, mail servers, name servers, text and zone authority).",
+   "when": "Starting with a lab domain.",
+   "cmd": "for t in A AAAA MX NS TXT SOA; do dig @{host} +noall +answer {domain} $t; done | tee {outdir}/dns-records.txt",
+   "needs": [
+    "dig"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "<5s",
+   "notes": "The host is the lab DNS server. +noall +answer: print only the answers.",
+   "source": "https://www.kali.org/tools/bind9/"
+  },
+  {
+   "id": "dns-axfr",
+   "category": "DNS (name lookups)",
+   "name": "Zone transfer attempt",
+   "what": "Try an AXFR (zone transfer, a full copy of the domain's records) against the lab DNS server.",
+   "when": "Lab domain where transfer testing is allowed.",
+   "cmd": "dig AXFR {domain} @{host} | tee {outdir}/axfr.txt",
+   "needs": [
+    "dig"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "<15s",
+   "notes": "A refusal is the expected answer from a healthy server.",
+   "source": "https://www.kali.org/tools/bind9/"
+  },
+  {
+   "id": "dns-dnsrecon",
+   "category": "DNS (name lookups)",
+   "name": "dnsrecon standard scan",
+   "what": "Collect standard DNS records and test for a zone transfer against the lab DNS server.",
+   "when": "Domain recon in one tool.",
+   "cmd": "dnsrecon -d {domain} -n {host} -t std -j {outdir}/dnsrecon.json",
+   "needs": [
+    "dnsrecon"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "20-60s",
+   "notes": "-d: the domain. -n: use the lab host as the name server. -t std: standard checks, including a zone transfer attempt. -j: save as JSON.",
+   "source": "https://www.kali.org/tools/dnsrecon/"
+  },
+  {
+   "id": "dns-reverse",
+   "category": "DNS (name lookups)",
+   "name": "Reverse lookups for a range",
+   "what": "Look up the name for every address in a range (PTR, or reverse, lookups).",
+   "when": "Mapping names on an internal range.",
+   "cmd": "nmap -sL -R -oN {outdir}/reverse-dns.txt {target}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "10-60s",
+   "notes": "-sL: only list targets. -R: always do reverse lookups. Sends name queries only, and only to your own resolver.",
+   "source": "https://nmap.org/book/man-host-discovery.html"
+  },
+  {
+   "id": "snmp-walk-public",
+   "category": "Network device monitoring (SNMP)",
+   "name": "snmpwalk with the public community",
+   "what": "Walk the device's full SNMP (network device monitoring) data using the default 'public' community string.",
+   "when": "The host answers SNMP version 1 or 2c.",
+   "cmd": "snmpwalk -v2c -c public {host} | tee {outdir}/snmpwalk.txt",
+   "needs": [
+    "snmpwalk"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "10-120s",
+   "notes": "Output is large. Try -v1 if -v2c times out. Tries one default login only; not a guessing attack.",
+   "source": "https://www.kali.org/tools/snmp/"
+  },
+  {
+   "id": "snmp-nmap",
+   "category": "Network device monitoring (SNMP)",
+   "name": "SNMP info scripts",
+   "what": "Pull the system description and device info using SNMP (network device monitoring).",
+   "when": "UDP port 161 is open.",
+   "cmd": "nmap -sU -p161 --script snmp-info,snmp-sysdescr -oA {outdir}/snmp-nmap {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "15-60s",
+   "notes": "-sU: scan UDP. -p161: only the SNMP port. Uses default community strings (SNMP passwords) only.",
+   "source": "https://nmap.org/nsedoc/scripts/snmp-info.html"
+  },
+  {
+   "id": "svc-ssh-audit",
+   "category": "Other network services",
+   "name": "ssh-audit",
+   "what": "Audit the SSH banner, key exchange, ciphers and host keys.",
+   "when": "An SSH port is open.",
+   "cmd": "ssh-audit -p {port} {host} | tee {outdir}/ssh-audit.txt",
+   "needs": [
+    "ssh-audit"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "<15s",
+   "notes": "Protocol negotiation only, no login attempts. -p: the port to check.",
+   "source": "https://www.kali.org/tools/ssh-audit/"
+  },
+  {
+   "id": "svc-ftp-anon",
+   "category": "Other network services",
+   "name": "FTP anonymous check",
+   "what": "Check whether anonymous FTP (file transfer) login is allowed.",
+   "when": "Port 21 is open.",
+   "cmd": "nmap -p21 -sV --script ftp-anon,ftp-syst -oA {outdir}/ftp-anon {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "15-60s",
+   "notes": "The ftp-anon script tries the anonymous user once. -sV: detect service versions.",
+   "source": "https://nmap.org/nsedoc/scripts/ftp-anon.html"
+  },
+  {
+   "id": "svc-rdp",
+   "category": "Other network services",
+   "name": "RDP security and NTLM info",
+   "what": "Show the encryption and security layers of RDP (Windows Remote Desktop) and host details from NTLM (Windows login protocol).",
+   "when": "Port 3389 is open.",
+   "cmd": "nmap -p3389 --script rdp-enum-encryption,rdp-ntlm-info -oA {outdir}/rdp {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "15-45s",
+   "notes": "rdp-ntlm-info shows the hostname and domain without credentials.",
+   "source": "https://nmap.org/nsedoc/scripts/rdp-enum-encryption.html"
+  },
+  {
+   "id": "svc-vnc",
+   "category": "Other network services",
+   "name": "VNC info",
+   "what": "Identify the VNC (remote screen sharing) version and login types.",
+   "when": "Ports in the 5900 range are open.",
+   "cmd": "nmap -p {ports} --script vnc-info,vnc-title -oA {outdir}/vnc {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "15-45s",
+   "notes": "Enter the VNC ports, for example 5900,5901.",
+   "source": "https://nmap.org/nsedoc/scripts/vnc-info.html"
+  },
+  {
+   "id": "svc-smtp",
+   "category": "Other network services",
+   "name": "SMTP capabilities",
+   "what": "List the commands an SMTP (email sending) server supports, plus NTLM (Windows login) info.",
+   "when": "Port 25, 465 or 587 is open.",
+   "cmd": "nmap -p25,465,587 --script smtp-commands,smtp-ntlm-info -oA {outdir}/smtp {host}",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "15-45s",
+   "notes": "Does not enumerate users.",
+   "source": "https://nmap.org/nsedoc/scripts/smtp-commands.html"
+  },
+  {
+   "id": "wifi-iw-scan",
+   "category": "Wi-Fi",
+   "name": "iw scan",
+   "what": "List nearby access points with channel, signal strength and security.",
+   "when": "Quick look without monitor mode (listen-only radio mode).",
+   "cmd": "iw dev {wlan} scan | tee {outdir}/iw-scan.txt",
+   "needs": [
+    "iw"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "5-10s",
+   "notes": "Your adapter sends probe requests (normal Wi-Fi scanning). Use airodump-ng or Kismet to stay fully passive.",
+   "source": "https://wireless.docs.kernel.org/en/latest/en/users/documentation/iw.html"
+  },
+  {
+   "id": "wifi-airmon-start",
+   "category": "Wi-Fi",
+   "name": "Start monitor mode",
+   "what": "Put the Alfa adapter into monitor mode (listen-only radio mode).",
+   "when": "Before airodump-ng or Kismet.",
+   "cmd": "airmon-ng start {wlan} | tee {outdir}/airmon-start.txt",
+   "needs": [
+    "airmon-ng"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "<10s",
+   "notes": "Usually creates an interface named like wlan0mon. It does not stop NetworkManager (the network connection manager) unless you run 'airmon-ng check kill'.",
+   "source": "https://www.kali.org/tools/aircrack-ng/"
+  },
+  {
+   "id": "wifi-airmon-stop",
+   "category": "Wi-Fi",
+   "name": "Stop monitor mode",
+   "what": "Return the adapter to managed mode (normal Wi-Fi use).",
+   "when": "After a capture.",
+   "cmd": "airmon-ng stop {mon}",
+   "needs": [
+    "airmon-ng"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "<10s",
+   "notes": "Give the monitor interface name.",
+   "source": "https://www.kali.org/tools/aircrack-ng/"
+  },
+  {
+   "id": "wifi-airodump-all",
+   "category": "Wi-Fi",
+   "name": "airodump-ng, all channels",
+   "what": "Passively survey access points and clients on the 2.4 and 5 GHz bands.",
+   "when": "Wi-Fi site survey.",
+   "cmd": "timeout --foreground {seconds} airodump-ng --band abg --output-format csv,pcap -w {outdir}/airodump-all {mon}",
+   "needs": [
+    "airodump-ng"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "--band abg: cover both bands. --output-format csv,pcap: save a spreadsheet file and a packet capture file. -w: the output file name prefix.",
+   "source": "https://www.aircrack-ng.org/doku.php?id=airodump-ng"
+  },
+  {
+   "id": "wifi-airodump-channel",
+   "category": "Wi-Fi",
+   "name": "airodump-ng, one channel",
+   "what": "Capture a single channel to get full coverage of it.",
+   "when": "Focus on one access point's channel.",
+   "cmd": "timeout --foreground {seconds} airodump-ng -c {channel} --output-format csv,pcap -w {outdir}/airodump-ch {mon}",
+   "needs": [
+    "airodump-ng"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-c: lock to one channel. --output-format csv,pcap: save a spreadsheet file and a packet capture file.",
+   "source": "https://www.aircrack-ng.org/doku.php?id=airodump-ng"
+  },
+  {
+   "id": "wifi-kismet",
+   "category": "Wi-Fi",
+   "name": "Kismet survey",
+   "what": "Run Kismet on the monitor interface for a set time, logging location if gpsd (the GPS service) has a fix.",
+   "when": "Longer survey or wardrive, with the web interface.",
+   "cmd": "timeout --foreground {seconds} kismet -c {mon} -p {outdir} -t wifi-survey --no-ncurses",
+   "needs": [
+    "kismet"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-c: the capture source. -p: log folder. -t: log title. The web interface is at http://localhost:2501.",
+   "source": "https://www.kismetwireless.net/docs/readme/"
+  },
+  {
+   "id": "bt-bluetoothctl-scan",
+   "category": "Bluetooth",
+   "name": "bluetoothctl scan",
+   "what": "Scan for nearby classic Bluetooth and BLE (Bluetooth Low Energy) devices.",
+   "when": "First Bluetooth survey.",
+   "cmd": "bluetoothctl --timeout {seconds} scan on | tee {outdir}/bluetoothctl-scan.txt",
+   "needs": [
+    "bluetoothctl"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "as set",
+   "notes": "Uses the default adapter; btmgmt lets you pick another one. --timeout: how many seconds to scan.",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "bt-btmgmt-find",
+   "category": "Bluetooth",
+   "name": "btmgmt find",
+   "what": "Search for classic Bluetooth devices and BLE (Bluetooth Low Energy) devices, with signal strength and flags.",
+   "when": "Alternative scan on a chosen adapter.",
+   "cmd": "btmgmt --index {hci} find | tee {outdir}/btmgmt-find.txt",
+   "needs": [
+    "btmgmt"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "10-20s",
+   "notes": "--index: which adapter to use. Add -l for BLE only, or -b for classic only.",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "bt-hcitool-scan",
+   "category": "Bluetooth",
+   "name": "Classic inquiry (hcitool)",
+   "what": "Search for classic Bluetooth devices and list their names.",
+   "when": "Fallback; hcitool is deprecated (outdated).",
+   "cmd": "hcitool -i {hci} scan --flush | tee {outdir}/hcitool-scan.txt",
+   "needs": [
+    "hcitool"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "10-20s",
+   "notes": "May be missing on newer installs; prefer bluetoothctl or btmgmt. -i: which adapter. --flush: clear cached results.",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "bt-hcitool-lescan",
+   "category": "Bluetooth",
+   "name": "BLE scan (hcitool)",
+   "what": "Scan for BLE (Bluetooth Low Energy) advertisements, the short broadcasts devices send.",
+   "when": "Fallback; hcitool is deprecated (outdated).",
+   "cmd": "timeout {seconds} hcitool -i {hci} lescan | tee {outdir}/hcitool-lescan.txt",
+   "needs": [
+    "hcitool"
+   ],
+   "risk": "discovery",
+   "root": true,
+   "est": "as set",
+   "notes": "Add --duplicates to see repeated advertisements. -i: which adapter.",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "bt-sdptool",
+   "category": "Bluetooth",
+   "name": "Bluetooth service browse (SDP)",
+   "what": "List the services a classic Bluetooth device offers, using SDP (service discovery).",
+   "when": "After finding a classic Bluetooth device you own.",
+   "cmd": "sdptool browse {bdaddr} | tee {outdir}/sdp.txt",
+   "needs": [
+    "sdptool"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "5-20s",
+   "notes": "Connects to the device, so it must be on your Mine tab. sdptool is deprecated (outdated).",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "bt-gatt-list",
+   "category": "Bluetooth",
+   "name": "Read a device's GATT data",
+   "what": "Connect and list a BLE (Bluetooth Low Energy) device's GATT services (the list of data it exposes).",
+   "when": "Inspect one BLE device you own.",
+   "cmd": "(printf 'connect %s\\n' {bdaddr}; sleep 8; printf 'menu gatt\\nlist-attributes %s\\nback\\ndisconnect %s\\nquit\\n' {bdaddr} {bdaddr}; sleep 2) | bluetoothctl | tee {outdir}/gatt.txt",
+   "needs": [
+    "bluetoothctl"
+   ],
+   "risk": "probe",
+   "root": false,
+   "est": "15-30s",
+   "notes": "Read-only listing; it fails if pairing is required. Never writes anything to the device.",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "bt-btmon",
+   "category": "Bluetooth",
+   "name": "Bluetooth adapter capture (btmon)",
+   "what": "Capture all HCI traffic (the messages between the computer and its Bluetooth adapter) to a btsnoop file.",
+   "when": "Debugging scans and connections.",
+   "cmd": "timeout {seconds} btmon -w {outdir}/btmon.btsnoop",
+   "needs": [
+    "btmon"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-w: write to a file. Open the btsnoop file in Wireshark.",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "bt-sniffle-adv",
+   "category": "Bluetooth",
+   "name": "Sniffle advertising capture",
+   "what": "Sniff BLE (Bluetooth Low Energy) advertisements into a pcap (packet capture file) with the CC2652P dongle.",
+   "when": "BLE survey without connecting.",
+   "cmd": "timeout {seconds} python3 /opt/sniffle/python_cli/sniff_receiver.py -s /dev/ttyUSB0 -a -o {outdir}/ble-adv.pcap",
+   "needs": [
+    "python3"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "-a: advertising only. -o: write a pcap. Add -c 37|38|39 to pin one channel, or -e for extended advertisements. Assumes the dongle is /dev/ttyUSB0 and Sniffle is in /opt/sniffle (setup puts it there); check with ls /dev/ttyUSB*.",
+   "source": "https://github.com/nccgroup/Sniffle"
+  },
+  {
+   "id": "bt-sniffle-target",
+   "category": "Bluetooth",
+   "name": "Sniffle one device",
+   "what": "Capture advertisements from one device's address.",
+   "when": "Follow a specific beacon.",
+   "cmd": "timeout {seconds} python3 /opt/sniffle/python_cli/sniff_receiver.py -s /dev/ttyUSB0 -a -m {bdaddr} -o {outdir}/ble-device.pcap",
+   "needs": [
+    "python3"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "-m: only this device's MAC (hardware) address. Add -r -70 to drop weak signals. Assumes the dongle is /dev/ttyUSB0 and Sniffle is in /opt/sniffle (setup puts it there); check with ls /dev/ttyUSB*.",
+   "source": "https://github.com/nccgroup/Sniffle"
+  },
+  {
+   "id": "sdr-rtl433",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "rtl_433 decode",
+   "what": "Decode sensor transmissions in the ISM (license-free radio) bands to JSON.",
+   "when": "Survey devices on 315, 433, 868 and 915 MHz.",
+   "cmd": "rtl_433 -f {freq}M -M time:iso -M level -T {seconds} -F json:{outdir}/rtl433.json",
+   "needs": [
+    "rtl_433"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "-f: centre frequency. -T: run time in seconds. -F json:file: save results as JSON.",
+   "source": "https://github.com/merbanan/rtl_433"
+  },
+  {
+   "id": "sdr-rtl-power",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "rtl_power sweep, 400 to 470 MHz",
+   "what": "Sweep a wide frequency range and log signal power to a CSV file.",
+   "when": "Find active frequencies in the UHF (ultra high frequency) band.",
+   "cmd": "rtl_power -f 400M:470M:25k -i 10 -e {seconds}s -g 40 {outdir}/rtl_power.csv",
+   "needs": [
+    "rtl_power"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "-f lower:upper:step: the range and step size. -i: seconds to average each pass. -e: exit time. -g: receiver gain.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr"
+  },
+  {
+   "id": "sdr-readsb",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "ADS-B aircraft (readsb)",
+   "what": "Receive ADS-B (aircraft position broadcasts) on 1090 MHz.",
+   "when": "Aircraft survey.",
+   "cmd": "mkdir -p {outdir}/adsb && timeout {seconds} readsb --device-type rtlsdr --interactive --write-json {outdir}/adsb",
+   "needs": [
+    "readsb"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "as set",
+   "notes": "Stop the dashboard's plane tracker first if it is using the dongle. --interactive: show a live table.",
+   "source": "https://github.com/wiedehopf/readsb"
+  },
+  {
+   "id": "sdr-rtl-test",
+   "category": "Radio receiving (software-defined radio)",
+   "name": "RTL-SDR health check",
+   "what": "Confirm the SDR (software-defined radio) dongle is detected and stable.",
+   "when": "Before a capture.",
+   "cmd": "timeout 10 rtl_test -t 2>&1 | tee {outdir}/rtl_test.txt",
+   "needs": [
+    "rtl_test"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<10s",
+   "notes": "-t: test the tuner range and gains.",
+   "source": "https://osmocom.org/projects/rtl-sdr/wiki/Rtl-sdr"
+  },
+  {
+   "id": "traffic-tcpdump-ring",
+   "category": "Packet capture",
+   "name": "tcpdump rotating capture",
+   "what": "Capture packets into rotating pcap (packet capture) files.",
+   "when": "Long capture with limited disk use.",
+   "cmd": "timeout {seconds} tcpdump -i {iface} -nn -s 0 -C 100 -W 10 -w {outdir}/cap.pcap",
+   "needs": [
+    "tcpdump"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-C 100: 100 MB per file. -W 10: keep 10 files. -nn: no name lookups.",
+   "source": "https://www.tcpdump.org/manpages/tcpdump.1.html"
+  },
+  {
+   "id": "traffic-tcpdump-host",
+   "category": "Packet capture",
+   "name": "tcpdump one host",
+   "what": "Capture traffic to or from one host.",
+   "when": "Focused capture during testing.",
+   "cmd": "timeout {seconds} tcpdump -i {iface} -nn -s 0 -w {outdir}/host.pcap host {host}",
+   "needs": [
+    "tcpdump"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "The trailing 'host' filter (a BPF packet filter) keeps only that host's traffic. -nn: no name lookups.",
+   "source": "https://www.tcpdump.org/manpages/tcpdump.1.html"
+  },
+  {
+   "id": "traffic-tshark-ring",
+   "category": "Packet capture",
+   "name": "tshark rotating capture",
+   "what": "Capture with the Wireshark engine into rotating files.",
+   "when": "A capture you will open in Wireshark.",
+   "cmd": "tshark -i {iface} -a duration:{seconds} -b filesize:102400 -b files:10 -w {outdir}/tshark.pcapng",
+   "needs": [
+    "tshark"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "as set",
+   "notes": "-a duration: stop after that many seconds. -b filesize:102400: start a new file every 100 MB. -b files:10: keep 10 files.",
+   "source": "https://www.wireshark.org/docs/man-pages/tshark.html"
+  },
+  {
+   "id": "box-ip-addr",
+   "category": "This box's own status",
+   "name": "Interfaces and addresses",
+   "what": "Show each network interface's addresses and link state.",
+   "when": "Baseline before scanning.",
+   "cmd": "ip -br addr | tee {outdir}/ip-addr.txt",
+   "needs": [
+    "ip"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<1s",
+   "notes": "-br: brief output.",
+   "source": "https://man7.org/linux/man-pages/man8/ip.8.html"
+  },
+  {
+   "id": "box-ip-route",
+   "category": "This box's own status",
+   "name": "Routes and neighbours",
+   "what": "Show IPv4 and IPv6 routes and the neighbour tables (ARP address lookups for IPv4, ND for IPv6).",
+   "when": "Understand the gateway and nearby hosts.",
+   "cmd": "(ip route; ip -6 route; ip neigh) | tee {outdir}/ip-route.txt",
+   "needs": [
+    "ip"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<1s",
+   "notes": "",
+   "source": "https://man7.org/linux/man-pages/man8/ip.8.html"
+  },
+  {
+   "id": "box-nmcli",
+   "category": "This box's own status",
+   "name": "NetworkManager status",
+   "what": "Show device status and visible Wi-Fi networks.",
+   "when": "Check which interfaces are up.",
+   "cmd": "(nmcli device status; nmcli device wifi list) | tee {outdir}/nmcli.txt",
+   "needs": [
+    "nmcli"
+   ],
+   "risk": "discovery",
+   "root": false,
+   "est": "<10s",
+   "notes": "The Wi-Fi list triggers a scan. Your adapter sends probe requests (normal Wi-Fi scanning).",
+   "source": "https://www.kali.org/tools/network-manager/"
+  },
+  {
+   "id": "box-lsusb",
+   "category": "This box's own status",
+   "name": "USB device tree",
+   "what": "List attached USB devices.",
+   "when": "Verify the radios are detected.",
+   "cmd": "lsusb -t | tee {outdir}/lsusb.txt",
+   "needs": [
+    "lsusb"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<1s",
+   "notes": "-t: tree view with drivers.",
+   "source": "https://www.kali.org/tools/usbutils/"
+  },
+  {
+   "id": "box-hci-info",
+   "category": "This box's own status",
+   "name": "Bluetooth adapter info",
+   "what": "Show the Bluetooth adapter's state and capabilities.",
+   "when": "Before Bluetooth scans.",
+   "cmd": "btmgmt --index {hci} info | tee {outdir}/btmgmt-info.txt",
+   "needs": [
+    "btmgmt"
+   ],
+   "risk": "passive",
+   "root": true,
+   "est": "<2s",
+   "notes": "Shows the address plus supported and current settings.",
+   "source": "https://www.kali.org/tools/bluez/"
+  },
+  {
+   "id": "box-gps",
+   "category": "This box's own status",
+   "name": "GPS fix check",
+   "what": "Read a few GPS messages from gpsd (the GPS service).",
+   "when": "Before wardriving or Kismet location logging.",
+   "cmd": "timeout 15 gpspipe -w -n 10 | tee {outdir}/gps.json",
+   "needs": [
+    "gpspipe"
+   ],
+   "risk": "passive",
+   "root": false,
+   "est": "<15s",
+   "notes": "Look for TPV messages (position reports) with mode 2 or 3, which means a 2D or 3D fix.",
+   "source": "https://gpsd.gitlab.io/gpsd/gpspipe.html"
+  },
+  {
+   "id": "creds-ssh",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: SSH (remote login)",
+   "what": "Tries factory-default usernames and passwords on SSH (remote login) to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/ssh-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} ssh 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-ftp",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: FTP (file transfer)",
+   "what": "Tries factory-default usernames and passwords on FTP (file transfer) to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/ftp-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} ftp 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-telnet",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: Telnet (old plain-text remote login)",
+   "what": "Tries factory-default usernames and passwords on Telnet (old plain-text remote login) to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/telnet-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} telnet 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-smb",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: Windows file sharing (SMB)",
+   "what": "Tries factory-default usernames and passwords on Windows file sharing (SMB) to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/windows-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} smb 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. Windows can lock accounts after a few wrong tries; check the lab's lockout setting first. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-rdp",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: Windows Remote Desktop (RDP)",
+   "what": "Tries factory-default usernames and passwords on Windows Remote Desktop (RDP) to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/windows-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} rdp 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. Windows can lock accounts after a few wrong tries; check the lab's lockout setting first. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-mysql",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: MySQL database",
+   "what": "Tries factory-default usernames and passwords on MySQL database to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/mysql-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} mysql 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-postgres",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: PostgreSQL database",
+   "what": "Tries factory-default usernames and passwords on PostgreSQL database to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/postgres-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} postgres 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-mssql",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: Microsoft SQL Server database",
+   "what": "Tries factory-default usernames and passwords on Microsoft SQL Server database to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/mssql-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/default-creds.txt; hydra -C \"$L\" -t 1 -W 1 -w 5 -f -I {host} mssql 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-vnc",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: VNC (remote screen sharing)",
+   "what": "Tries factory-default usernames and passwords on VNC (remote screen sharing) to see if any still work.",
+   "when": "To prove a device you own isn't still using its out-of-the-box login.",
+   "cmd": "L=/usr/share/seclists/Passwords/Default-Credentials/vnc-betterdefaultpasslist.txt; [ -f \"$L\" ] || L=/opt/havokbox/vnc-passwords.txt; hydra -P \"$L\" -t 1 -W 1 -w 5 -f -I {host} vnc 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-5 min",
+   "notes": "Uses the default-credential list from SecLists (falls back to the box's own short list). -t 1: one connection at a time. -W 1: wait a second between tries. -f: stop at the first login that works. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-http-basic",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: web page login box (HTTP basic)",
+   "what": "Tries factory-default logins on a web page that pops up a browser login box.",
+   "when": "A device's web page asks for a username and password in a browser pop-up.",
+   "cmd": "hydra -C /opt/havokbox/default-creds.txt -t 1 -W 1 -w 5 -f -I -s {port} {host} http-get / 2>&1 | sed -E 's/(password:)[[:space:]]*.*/\\1 (hidden)/'",
+   "needs": [
+    "hydra"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-3 min",
+   "notes": "Only works for the browser pop-up kind of login, not login forms on the page. -s: the port the web page is on. The output names the account that works; the password is hidden.",
+   "source": "https://www.kali.org/tools/hydra/"
+  },
+  {
+   "id": "creds-web-defaults",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: web admin pages",
+   "what": "Finds web admin pages for routers, printers, cameras and similar, and tries their factory-default logins.",
+   "when": "Checking a range for devices that still use their default web admin password.",
+   "cmd": "nmap -Pn --open -T2 --max-parallelism 1 --max-hostgroup 1 --scan-delay 1s -p 80,443,8000,8080,8081,8443,8888 --script http-default-accounts {target} 2>&1 | sed -E 's/^(\\|[[:space:]]+[^[:space:]:]+):[^[:space:]]*$/\\1: (password hidden)/'",
+   "needs": [
+    "nmap"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "1-10 min",
+   "notes": "nmap recognizes the product from the page and tries that product's known default only. Runs one device and one probe at a time, a second apart. The output names the account that works; the password is hidden.",
+   "source": "https://nmap.org/nsedoc/scripts/http-default-accounts.html"
+  },
+  {
+   "id": "creds-snmp",
+   "category": "Default logins (type yes to run)",
+   "name": "Default logins: network device monitoring (SNMP)",
+   "what": "Tries a dozen common SNMP community strings (the password SNMP uses) such as public and private.",
+   "when": "A switch, printer or router answers SNMP (UDP port 161).",
+   "cmd": "onesixtyone -w 200 -c /opt/havokbox/snmp-communities.txt {host} | tee {outdir}/snmp-communities.txt",
+   "needs": [
+    "onesixtyone"
+   ],
+   "risk": "active",
+   "root": false,
+   "est": "<30s",
+   "notes": "A working 'private' community often means the device's settings can be changed over the network. -w 200: wait 200 milliseconds between tries.",
+   "source": "https://www.kali.org/tools/onesixtyone/"
+  }
+ ],
+ "chains": [
+  {
+   "id": "chain-new-network",
+   "name": "New network triage",
+   "what": "Box baseline, find hosts, quick port scan, version detection, then fingerprint one web service.",
+   "steps": [
+    "box-ip-addr",
+    "box-ip-route",
+    "disc-ping-sweep",
+    "ports-quick",
+    "svc-version",
+    "web-whatweb",
+    "web-curl-headers"
+   ]
+  },
+  {
+   "id": "chain-windows-host",
+   "name": "Windows host enumeration",
+   "what": "Unauthenticated enumeration of one Windows or Active Directory (domain) host.",
+   "steps": [
+    "ports-top1000",
+    "smb-nmap-safe",
+    "smb-smbclient-list",
+    "smb-enum4linux-ng",
+    "rpc-null",
+    "ldap-rootdse",
+    "svc-rdp"
+   ]
+  },
+  {
+   "id": "chain-web-first-look",
+   "name": "Web app first look",
+   "what": "Fingerprint and map one web service.",
+   "steps": [
+    "web-curl-headers",
+    "web-whatweb",
+    "web-curl-robots",
+    "web-testssl",
+    "web-nikto",
+    "web-feroxbuster"
+   ]
+  },
+  {
+   "id": "chain-domain-recon",
+   "name": "Lab DNS recon",
+   "what": "Name records, dnsrecon and a zone transfer check against the lab DNS server.",
+   "steps": [
+    "dns-records",
+    "dns-dnsrecon",
+    "dns-axfr"
+   ]
+  },
+  {
+   "id": "chain-ble-survey",
+   "name": "Bluetooth Low Energy survey",
+   "what": "Check the radios, scan, capture advertisements, then read a device you own.",
+   "steps": [
+    "box-lsusb",
+    "box-hci-info",
+    "bt-bluetoothctl-scan",
+    "bt-btmgmt-find",
+    "bt-sniffle-adv",
+    "bt-gatt-list"
+   ]
+  },
+  {
+   "id": "chain-wifi-survey",
+   "name": "Wi-Fi survey",
+   "what": "Passive survey with logging; monitor mode is switched off at the end.",
+   "steps": [
+    "box-lsusb",
+    "box-gps",
+    "wifi-iw-scan",
+    "wifi-airmon-start",
+    "wifi-airodump-all",
+    "wifi-kismet",
+    "wifi-airmon-stop"
+   ]
+  },
+  {
+   "id": "chain-rf-survey",
+   "name": "Radio receive survey",
+   "what": "Check the software-defined radio, sweep the UHF band, then decode license-free-band sensors.",
+   "steps": [
+    "sdr-rtl-test",
+    "sdr-rtl-power",
+    "sdr-rtl433"
+   ]
+  },
+  {
+   "id": "chain-service-sweep",
+   "name": "Service deep-dive",
+   "what": "All TCP ports, versions and OS guess, then safe scripts and common service checks.",
+   "steps": [
+    "ports-full-tcp",
+    "svc-version",
+    "svc-os-detect",
+    "nse-default",
+    "nse-safe",
+    "svc-ssh-audit",
+    "snmp-nmap",
+    "snmp-walk-public"
+   ]
+  },
+  {
+   "id": "chain-default-logins",
+   "name": "Default-login check on one device",
+   "what": "Tries factory-default logins on every common login service of one device, one at a time.",
+   "steps": [
+    "creds-ssh",
+    "creds-ftp",
+    "creds-telnet",
+    "creds-smb",
+    "creds-rdp",
+    "creds-mysql",
+    "creds-postgres",
+    "creds-mssql",
+    "creds-vnc",
+    "creds-snmp"
+   ]
+  }
+ ]
 }

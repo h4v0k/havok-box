@@ -217,7 +217,8 @@ class Api:
             out.append({"tool": name, "category": spec.category, "space": getattr(spec, "space", ""),
                         "phase": getattr(spec, "phase", None),
                         "recipe": bool(getattr(spec, "recipe", False)),
-                        "label": getattr(spec, "label", None) or name,
+                        "label": getattr(spec, "label", None) or _plain(name),
+                        "help": _help(name),
                         "params": {k: {kk: vv for kk, vv in v.items() if kk != "default"}
                                    for k, v in (spec.params or {}).items()},
                         "needs_approval": spec.category not in ("recon.passive",),
@@ -389,6 +390,7 @@ class Api:
                 "tool": t.get("tool"),
                 "target": t.get("target"),
                 "label": t.get("label"),            # generated in code (tasks.LABELS)
+                "help": t.get("help") or _help(t.get("tool")),
                 "mode": t.get("mode", "stealth"),
                 "suggested": bool(t.get("suggested")) and runnable,
                 "needs_approval": decision.needs_approval or not decision.allowed or self._is_recipe(t.get("tool")),
@@ -419,3 +421,27 @@ class Api:
                 f["kind"] == "services" for f in findings):
             return "test"
         return "enumerate"
+
+
+def _help(tool) -> str:
+    from .tasks import HELP
+    return HELP.get(tool or "", "")
+
+
+def _plain(tool: str) -> str:
+    """Tool-panel name: the action label without its {placeholders}."""
+    import re
+    from .tasks import LABELS
+    names = {"wifi.watch": "Watch one Wi-Fi network", "subghz.replay": "Replay a saved remote",
+             "ble.gatt": "Read what a Bluetooth device offers", "sdr.decode": "Decode sensor signals",
+             "radio.aprs": "Ham radio position reports", "net.local": "Which networks is the box on",
+             "marauder.deauth": "Kick Wi-Fi clients off a network (ESP32 board)"}
+    if tool in names:
+        return names[tool]
+    text = LABELS.get(tool)
+    if not text:
+        return tool
+    out = re.sub(r"\s*\(?\{[a-z_]+\}\)?", "", text).strip(" :")
+    out = re.sub(r"\s+(on|at|for|off|of)\s*:?$", "", out).strip(" :")
+    out = re.sub(r"\s+(on|off|at)\s+\(", " (", out)
+    return out or tool

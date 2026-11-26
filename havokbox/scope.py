@@ -232,6 +232,14 @@ class Gate:
 
         if category in NETWORK_CATEGORIES:
             ip = target.get("ip")
+            net = target.get("network")
+            if category == "auth.attempt" and net and ip:
+                return Decision(False, False, "give either one device (ip) or a range (network), not both")
+            if category == "auth.attempt" and net and not ip:
+                # default-login sweep over a range: the whole range must be in the engagement
+                if not self.scope.network_in_scope(net):
+                    return Decision(False, False, f"network {net!r} not in the engagement (or on the never list)")
+                return self._approval(category, f"{category} across in-scope {net}")
             if not ip or not self.scope.ip_in_scope(ip):
                 return Decision(False, False, f"target ip {ip!r} not in the engagement (or on the never list)")
             return self._approval(category, f"{category} on in-scope {ip}")

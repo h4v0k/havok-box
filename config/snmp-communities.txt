@@ -1,0 +1,12 @@
+public
+private
+community
+manager
+admin
+cisco
+default
+snmp
+monitor
+read
+write
+secret

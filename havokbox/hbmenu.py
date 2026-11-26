@@ -367,8 +367,13 @@ def act_kit(ui, scope, gui: bool = False) -> None:
         ui.error(str(e))
         return
     text = "\n\n".join(cmd for _, cmd, _ in p.commands) + ("\n\n(runs with sudo)" if p.root else "")
-    if ui.confirm(f"Run this?\n\n{text}\n\nOutput goes to {p.outdir}"):
-        subprocess.call(["bash", str(kit.write(p))])
+    if p.active:
+        typed = ui.ask(f"{text}\n\nThis tries default logins on the device. Type yes to run it")
+        if not kit.confirmed(p, typed):
+            return
+    elif not ui.confirm(f"Run this?\n\n{text}\n\nOutput goes to {p.outdir}"):
+        return
+    subprocess.call(["bash", str(kit.write(p))])
 
 
 def act_hw(ui) -> None:
