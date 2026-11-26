@@ -337,6 +337,40 @@ def act_engage(ui, scope_path: str) -> None:
                           "Scans now reach only this range (never the never list).")
 
 
+def act_kit(ui, scope, gui: bool = False) -> None:
+    """Pick a recipe, fill it in, see the exact command, run it here. (GUI mode opens the window.)"""
+    from . import kit
+    if gui:
+        subprocess.Popen(["hb", "kit", "--gui"], start_new_session=True)
+        return
+    cat = kit.load()
+    cats = cat.categories() + ["Chains (step-by-step)"]
+    c = ui.choose("Toolbox: pick a category", cats)
+    if c is None:
+        return
+    items = list(cat.chains.values()) if c == len(cats) - 1 else cat.in_category(cats[c])
+    j = ui.choose(cats[c], [f"{x.name}  - {x.what}" for x in items])
+    if j is None:
+        return
+    item = items[j]
+    params = cat.chain_params(item.id) if item.id in cat.chains else item.params
+    values = {}
+    for name in params:
+        default = (str(scope.include[0]) if name == "target" and scope.include else kit.DEFAULTS.get(name, ""))
+        v = ui.ask(kit.LABELS.get(name, name), default)
+        if v is None:
+            return
+        values[name] = v
+    try:
+        p = kit.plan(cat, item.id, values, kit.Context(scope=scope))
+    except kit.KitError as e:
+        ui.error(str(e))
+        return
+    text = "\n\n".join(cmd for _, cmd, _ in p.commands) + ("\n\n(runs with sudo)" if p.root else "")
+    if ui.confirm(f"Run this?\n\n{text}\n\nOutput goes to {p.outdir}"):
+        subprocess.call(["bash", str(kit.write(p))])
+
+
 def act_hw(ui) -> None:
     from . import hwcheck
     ui.show("Hardware check", hwcheck.render(hwcheck.check(missing_tools=hwcheck.missing_from_registry())))
@@ -350,7 +384,20 @@ MAIN = ["Engagement: find and pick the lab",
         "Find hosts running a port or service",
         "Compare two scans (what changed)",
         "Past scans",
-        "Check my hardware"]
+        "Check my hardware",
+        "Command toolbox (common recon recipes)"]
+
+
+def run_kit(scope_path: str) -> int:
+    ui = TermUI()
+    try:
+        act_kit(ui, hbcli.load_scope(scope_path))
+    except (KeyboardInterrupt, EOFError):
+        print()
+    except (ValueError, OSError, hbcli.ScopeError) as e:
+        ui.error(str(e))
+        return 1
+    return 0
 
 
 def run(scope_path: str, gui: bool = False) -> int:
@@ -373,7 +420,8 @@ def run(scope_path: str, gui: bool = False) -> int:
                 i -= 1
                 (lambda: act_scan(ui, scope), lambda: act_scan(ui, scope, flow=True), lambda: act_hosts(ui),
                  lambda: act_ports(ui), lambda: act_find(ui), lambda: act_diff(ui),
-                 lambda: act_past(ui, gui), lambda: act_hw(ui))[i]()
+                 lambda: act_past(ui, gui), lambda: act_hw(ui),
+                 lambda: act_kit(ui, scope, gui))[i]()
             except (ValueError, OSError, json.JSONDecodeError, ET.ParseError, hbcli.ScopeError) as e:
                 ui.error(str(e))
     except (KeyboardInterrupt, EOFError):

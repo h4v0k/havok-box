@@ -178,3 +178,25 @@ scp -r "havok:$(ssh havok hb last)" .   # copies the most recent scan folder
   password. The VNC server only listens on the box itself, so the SSH tunnel is the way in.
 - **Full Kali desktop in a browser:** the dashboard's Desktop tab (noVNC) works in Safari, on the
   Mac, a tablet or a phone. See `docs/desktop.md`.
+
+## Command toolbox (`hb kit`)
+
+A catalog of about 70 common recon and enumeration commands (host discovery, port scans, nmap
+scripts, web, SMB/AD, DNS, SNMP, Wi-Fi, Bluetooth, SDR receive, traffic capture, box info) plus
+step-by-step chains such as **New network triage**, **Windows host enum**, **Web app first look**,
+**BLE survey** and **Wi-Fi survey**.
+
+- **Desktop:** double-click **havok-box toolbox** (or run `hb kit --gui`). It opens a page in the
+  browser: pick a category or search, fill in the blanks (targets are suggested from the
+  engagement), **Preview command**, then **Copy** or **Run in terminal**. Closing the small terminal
+  window that started it stops the page.
+- **SSH:** `hb kit` for numbered menus, `hb kit list`, `hb kit show <id>`,
+  `hb kit run <id> target=10.20.0.0/24 [-n]` (`-n` prints without running).
+- Every run gets a folder in `~/havok/kit/<time>_<id>/` with `command.txt`, `run.sh` and
+  `output.log`, and a line in `~/havok/kit/history.log`.
+
+Rules it enforces: there's no free-form command box; every blank is checked. Network targets must be
+in the engagement and off the never list (nmap gets `--exclude`, and tools that can't skip addresses
+refuse ranges that contain never-list hosts). Bluetooth recipes that connect to a device need it on
+the Mine tab. Exploitation, credential attacks, poisoning, deauth and RF transmit aren't in the
+catalog, and the tests fail if one is added. Recipes are in `havokbox/kit_recipes.json`.

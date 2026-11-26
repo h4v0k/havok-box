@@ -32,6 +32,7 @@ owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone das
 
 ## Useful commands on the box
 
+- `hb kit list` / `hb kit show <id>`: the command toolbox catalog (running a recipe asks first).
 - `hb engage`: the current engagement and time left. `hb find`: networks the box is on.
 - `hb`: menus. `hb hw`: is every board working? `hb profiles`, `hb scan <ip/cidr> -p quiet|standard|robust`,
   `hb hosts [--port N]`, `hb ports`, `hb flow <cidr>`, `hb diff old.xml new.xml`.

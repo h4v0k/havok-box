@@ -350,6 +350,55 @@ def cmd_engage(a) -> int:
     return 0
 
 
+def cmd_kit(a) -> int:
+    from . import kit
+    if a.gui:
+        from . import kitweb
+        return kitweb.serve(lambda: load_scope(a.scope))
+    if a.action == "menu":
+        from . import hbmenu
+        return hbmenu.run_kit(a.scope)
+    cat = kit.load()
+    if a.action == "list":
+        for c in cat.categories():
+            print(f"\n{c}")
+            for r in cat.in_category(c):
+                print(f"  {r.id:<28} {r.name}  [{r.risk}{', sudo' if r.root else ''}]")
+        print("\nChains")
+        for c in cat.chains.values():
+            print(f"  {c.id:<28} {c.name}  ({len(c.steps)} steps)")
+        return 0
+    if not a.item:
+        raise ScopeError("which recipe? see: hb kit list")
+    if a.action == "show":
+        r = cat.recipes.get(a.item)
+        if not r:
+            c = cat.chains.get(a.item)
+            if not c:
+                raise ScopeError(f"no recipe or chain called {a.item}")
+            print(f"{c.name}: {c.what}\nsteps: {', '.join(c.steps)}\nneeds: {', '.join(cat.chain_params(c.id))}")
+            return 0
+        print(f"{r.name} [{r.category}, {r.risk}{', sudo' if r.root else ''}]\n{r.what}\n"
+              f"when: {r.when}\ncommand: {r.cmd}\nneeds: {', '.join(r.params) or 'nothing'}\n{r.notes}")
+        return 0
+    values = {}
+    for pair in a.values:
+        if "=" not in pair:
+            raise ScopeError(f"{pair!r}: give values as name=value")
+        k_, v_ = pair.split("=", 1)
+        values[k_.strip()] = v_
+    try:
+        p = kit.plan(cat, a.item, values, kit.Context(scope=load_scope(a.scope)))
+    except kit.KitError as e:
+        raise ScopeError(str(e))
+    for _, c, _ in p.commands:
+        print("+ " + c, file=sys.stderr)
+    if a.dry_run:
+        return 0
+    run = kit.write(p)
+    return subprocess.call(["bash", str(run)])
+
+
 def _ip_json(argv: list[str]) -> str:
     try:
         return subprocess.run(argv, capture_output=True, text=True, timeout=10).stdout
@@ -445,6 +494,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("last", help="print the folder of the most recent scan")
     sub.add_parser("profiles", help="describe the scan profiles")
     sub.add_parser("hw", help="check every board: plugged in? software answering?")
+    k = sub.add_parser("kit", help="command toolbox: common recon recipes (menus, --gui, list, show, run)")
+    k.add_argument("action", nargs="?", default="menu", choices=["menu", "list", "show", "run"])
+    k.add_argument("item", nargs="?")
+    k.add_argument("values", nargs="*", help="name=value pairs, e.g. target=10.20.0.0/24")
+    k.add_argument("--gui", action="store_true", help="open the toolbox window in the browser")
+    k.add_argument("-n", "--dry-run", action="store_true", help="print the command, don't run it")
     e = sub.add_parser("engage", help="show, start or end the engagement (the lab ranges in scope)")
     e.add_argument("action", nargs="?", default="status", choices=["status", "start", "end"])
     e.add_argument("networks", nargs="*")
@@ -457,7 +512,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("gui", help="point-and-click windows on the Kali desktop")
 
     argv = sys.argv[1:] if argv is None else argv
-    subs = {"scan", "flow", "hosts", "ports", "diff", "last", "profiles", "menu", "gui", "hw", "engage", "find"}
+    subs = {"scan", "flow", "hosts", "ports", "diff", "last", "profiles", "menu", "gui", "hw", "engage", "find", "kit"}
     if not subs & set(argv) and not {"-h", "--help"} & set(argv):
         argv = [*argv, "menu"]  # plain 'hb' opens the menus
     a = ap.parse_args(argv)
@@ -475,6 +530,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if a.cmd == "engage":
             return cmd_engage(a)
+        if a.cmd == "kit":
+            return cmd_kit(a)
         if a.cmd == "find":
             return cmd_find(a)
         if a.cmd == "last":

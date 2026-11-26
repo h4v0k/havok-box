@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>havok-box toolbox</title>
+<link rel="stylesheet" href="static/kit.css" id="css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">havok-box toolbox <span class="lab">LAB ONLY</span></div>
+  <div id="eng" class="eng" aria-live="polite"></div>
+</header>
+<div class="layout">
+  <nav class="side" aria-label="Categories">
+    <label class="sr" for="q">Search commands</label>
+    <input id="q" type="search" placeholder="Search: nmap, smb, ble, web…" autocomplete="off">
+    <div id="cats" class="cats"></div>
+  </nav>
+  <main>
+    <section id="list" class="list" aria-label="Commands"></section>
+    <section id="detail" class="detail" hidden aria-live="polite">
+      <button type="button" id="back" class="btn">Back to list</button>
+      <h1 id="d-name"></h1>
+      <p id="d-meta" class="meta"></p>
+      <p id="d-what"></p>
+      <p id="d-when" class="dim"></p>
+      <div id="d-steps"></div>
+      <form id="form" class="form" autocomplete="off"></form>
+      <div class="row">
+        <button type="button" id="preview" class="btn">Preview command</button>
+        <button type="button" id="copy" class="btn">Copy</button>
+        <button type="button" id="run" class="btn primary">Run in terminal</button>
+      </div>
+      <p id="msg" class="msg" role="status"></p>
+      <pre id="cmd" class="cmd" hidden></pre>
+      <details id="d-notes-wrap"><summary>Flags explained</summary><p id="d-notes"></p><p id="d-src" class="dim"></p></details>
+    </section>
+  </main>
+</div>
+<script src="static/kit.js"></script>
+</body>
+</html>

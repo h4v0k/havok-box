@@ -12,7 +12,9 @@
       "Bash(python3 -m pytest *)",
       "Bash(hb engage)",
       "Bash(hb engage status)",
-      "Bash(hb find)"
+      "Bash(hb find)",
+      "Bash(hb kit list)",
+      "Bash(hb kit show *)"
     ],
     "ask": [
       "Bash(hb scan *)",
@@ -22,7 +24,10 @@
       "Bash(systemctl *)",
       "Bash(nmcli *)",
       "Bash(hb find *)",
-      "Bash(arp-scan *)"
+      "Bash(arp-scan *)",
+      "Bash(hb kit run *)",
+      "Bash(hb kit --gui*)",
+      "Bash(hb kit)"
     ],
     "deny": [
       "Bash(rfcat *)",

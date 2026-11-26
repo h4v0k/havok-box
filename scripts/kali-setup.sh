@@ -123,7 +123,7 @@ apt-get update -qq || warn "apt update had warnings; continuing"
 CORE_PKGS="python3 python3-venv python3-pip openssl nftables ca-certificates curl network-manager dnsmasq-base iw"
 RECON_PKGS="kismet gpsd gpsd-clients rtl-sdr rtl-433 aircrack-ng hcxtools hcxdumptool tshark tcpdump nmap iw bluez testssl.sh seclists responder"
 # Tools the dashboard buttons already call (hidden until installed), + the Yard Stick and quiet discovery
-RECON_PKGS="$RECON_PKGS rfcat direwolf multimon-ng python3-serial python3-intelhex nuclei netexec feroxbuster p0f onesixtyone snmp ldap-utils thc-ipv6 mitm6 hydra whatweb smbclient exploitdb arp-scan netdiscover bettercap usbutils"
+RECON_PKGS="$RECON_PKGS rfcat direwolf multimon-ng python3-serial python3-intelhex nuclei netexec feroxbuster p0f onesixtyone snmp ldap-utils thc-ipv6 mitm6 hydra whatweb smbclient exploitdb arp-scan netdiscover bettercap usbutils fping nbtscan enum4linux-ng nikto gobuster ssh-audit dnsrecon dnsutils"
 # Build deps for readsb (ADS-B), which isn't packaged
 BUILD_PKGS="git build-essential cmake pkg-config librtlsdr-dev libusb-1.0-0-dev zlib1g-dev libzstd-dev libncurses-dev"
 DESKTOP_PKGS="kali-desktop-xfce tigervnc-standalone-server novnc websockify"
@@ -602,7 +602,19 @@ DESKTOP
 done
 DESK="$(getent passwd "$RUN_USER" | cut -d: -f6)/Desktop"
 install -d -o "$RUN_USER" -g "$RUN_USER" "$DESK"
+# Command toolbox: a local-only browser page; the terminal it opens keeps it running (close = stop)
+cat > /usr/share/applications/havok-box-kit.desktop <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=havok-box toolbox
+Comment=Common recon commands: pick, fill in, preview, run (scope-checked, logged)
+Exec=hb kit --gui
+Icon=utilities-terminal
+Terminal=true
+Categories=Network;
+DESKTOP
 install -m 0755 -o "$RUN_USER" -g "$RUN_USER" /usr/share/applications/havok-box.desktop "$DESK/"
+install -m 0755 -o "$RUN_USER" -g "$RUN_USER" /usr/share/applications/havok-box-kit.desktop "$DESK/"
 ok "hb installed: run 'hb' for menus, 'hb gui' or the desktop icon for windows (scans in $DATA_DIR/scans)"
 
 # ---- systemd units: dashboard + watchdog ------------------------------------
