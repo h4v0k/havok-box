@@ -169,6 +169,23 @@ function stepButton(p) {
        + (p.help ? " · " + p.help : "") }));
 }
 
+// One approval for a whole plan: every runnable, in-scope step on a card that needs approval,
+// except default-login tries, Wi-Fi attacks, transmitting and owner recipes, which keep their own
+// sheet each time.
+const SOLO = new Set(["auth.attempt", "exploit.tool", "net.poison", "wifi.deauth", "wifi.inject",
+  "wifi.rogue_ap", "rf.replay", "rf.transmit"]);
+function batchable(steps) {
+  return steps.filter((p) => p.needs_approval && p.runnable && p.in_scope && !p.approved
+    && !SOLO.has(p.category) && !p.recipe);
+}
+function batchButton(steps) {
+  const ok = batchable(steps);
+  if (ok.length < 2) return null;
+  return el("button", { type: "button", class: "btn big primary", onclick: () => openBatch(ok) },
+    `Approve all ${ok.length} steps`,
+    el("small", { text: "Shows every command first, then runs them one after another" }));
+}
+
 function renderFindings() {
   const box = $("#findings");
   const fs = state.findings.slice().reverse();
@@ -176,6 +193,7 @@ function renderFindings() {
   const waiting = state.proposals.filter((p) => !known.has(p.result_id));
   const waitBox = waiting.length ? el("article", { class: "finding" },
     el("header", {}, el("span", { class: "sum", text: "Waiting for your approval" })),
+    batchButton(waiting),
     el("div", { class: "steps" }, waiting.map(stepButton))) : null;
   if (!fs.length && waitBox) { box.replaceChildren(waitBox); return; }
   if (!fs.length) { box.replaceChildren(el("p", { class: "empty", text: "No findings yet. Start with a recon card above." })); return; }
@@ -197,6 +215,7 @@ function renderFindings() {
         el("span", { class: "tag", text: f.mode })),
       el("time", { class: "hint", text: fmtTime(f.created) }),
       findingDetails(f),
+      batchButton(steps),
       steps.length ? el("div", { class: "steps" }, steps.map(stepButton)) : null);
   }));
 }
@@ -327,7 +346,7 @@ function actionButton(text, fn, cls = "btn") {
   return b;
 }
 function mineButton(already, fn) {
-  return already ? el("span", { class: "tag", text: "Mine" }) : actionButton("Mine", fn);
+  return already ? el("span", { class: "tag", text: "Known" }) : actionButton("Known", fn);
 }
 async function mineCall(path, kind, value) {
   const r = await call("POST", path, { kind, value });
@@ -337,7 +356,7 @@ async function mineCall(path, kind, value) {
 async function markMine(pairs) {
   try {
     for (const [kind, value] of pairs) await mineCall("/api/mine/add", kind, value);
-    toastMine("Added to Mine.");
+    toastMine("Added to Known devices.");
   } catch (e) { toastMine(e.message); }
   renderMine(); render();
 }
@@ -403,7 +422,7 @@ function renderMine() {
     mineList(mine.ble, "ble", mine.removable.ble),
     addRow("Device address aa:bb:cc:dd:ee:ff", "ble", (v) => v));
   $("#mine-subghz").replaceChildren(el("h3", { text: "My remotes and receivers" }),
-    el("p", { class: "hint", text: "Run a sub-GHz scan, press the remote, then tap Mine on its capture. Replay appears once it's yours." }),
+    el("p", { class: "hint", text: "Run a sub-GHz scan, press the remote, then tap Known on its capture. Replay appears once it's on this list." }),
     mineList(mine.subghz, "subghz", mine.removable.subghz));
   const rb = mine.removable.tx_bands || [];
   const isRem = (b) => rb.some((x) => x.min_mhz === b.min_mhz && x.max_mhz === b.max_mhz);
@@ -432,6 +451,28 @@ function renderEngagement() {
     ? `In engagement "${eng.engagement.name}": ${eng.engagement.networks.join(", ")} — ${eng.time_left} left.`
     : "No engagement. Scans of lab networks are refused until you pick one."
       + (eng && eng.never && eng.never.length ? ` Never list: ${eng.never.join(", ")}.` : "");
+  $("#eng-sweeps").replaceChildren(...(active ? eng.engagement.networks.map((n) =>
+    actionButton(`Find hosts on ${n}`, () => findHosts(n, false), "btn big")) : []));
+  const saved = (eng && eng.labs) || [];
+  $("#eng-labs").replaceChildren(...(saved.length ? [el("h3", { text: "Your saved labs" }),
+    ...saved.map((l) => el("div", { class: "hw-row hw-ok" },
+      el("strong", { text: l.name }), el("p", { text: l.networks.join(", ") }),
+      el("div", { class: "row" },
+        actionButton("Start again", () => startLab(l.name), "btn big primary"),
+        actionButton("Forget", async (b) => {
+          if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Tap again to forget";
+            setTimeout(() => { delete b.dataset.armed; b.textContent = "Forget"; }, 5000); return; }
+          try { eng = await call("POST", "/api/engagement/forget-lab", { lab: l.name }); } catch (e) { $("#eng-msg").textContent = e.message; }
+          renderEngagement();
+        }, "btn big"))))] : []));
+}
+async function startLab(name) {
+  const hours = Number($("#eng-hours").value);
+  try {
+    const r = await call("POST", "/api/engagement/start", { lab: name, hours });
+    $("#eng-msg").textContent = r.status === "active" ? `Engagement "${name}" started.` : (r.reason || r.status);
+  } catch (e) { $("#eng-msg").textContent = e.message; }
+  loadEngagement(); refresh();
 }
 async function startEngagement(networks) {
   const name = $("#eng-name").value.trim() || "lab";
@@ -447,7 +488,7 @@ async function findHosts(network, connected) {
     const target = connected ? { network, connected: true } : { network };
     const r = await call("POST", "/api/tool", { tool: "net.find", target });
     $("#eng-msg").textContent = r.status === "ok"
-      ? (r.needs_approval ? `Sweep of ${network} is waiting for your approval.` : `Finding hosts on ${network}… results show under Findings.`)
+      ? (r.needs_approval ? `Sweep of ${network} is waiting for your approval (it isn't attached or in your engagement).` : `Finding hosts on ${network}… results show under Findings.`)
       : (r.reason || r.status);
   } catch (e) { $("#eng-msg").textContent = e.message; }
   refresh();
@@ -527,13 +568,47 @@ async function startScan(b, space, action) {
   refresh();
 }
 
+async function runBatch(steps) {
+  $("#sheet-run").disabled = true;
+  const failed = [];
+  for (const p of steps) {
+    if (pendingBatch !== steps) break;   // sheet closed: stop queuing the rest
+    try {
+      // Same per-step digest check as a single approval: a changed command is refused.
+      await call("POST", "/api/approve", { task_id: p.task_id, digest: p.digest });
+      await call("POST", "/api/run", { task_id: p.task_id });
+    } catch (e) { failed.push(`${p.label || p.tool}: ${e.message}`); }
+  }
+  if (failed.length) {
+    $("#sheet-run").disabled = false;
+    $("#sheet-note").textContent = `${steps.length - failed.length} queued. Didn't run: ${failed.join("; ")}. Close and reopen to see the current commands.`;
+  } else closeSheet();
+  refresh();
+}
+
 async function runPassive(p) {
   try { await call("POST", "/api/run", { task_id: p.task_id }); } catch (e) { $("#status").textContent = e.message; }
   refresh();
 }
 
+let pendingBatch = null;
+function openBatch(steps) {
+  pending = null; pendingBatch = steps;
+  $("#sheet-title").textContent = `Approve ${steps.length} steps`;
+  $("#sheet-target").textContent = [...new Set(steps.map((p) => fmtTarget(p.target)))].join("; ");
+  $("#sheet-cat").textContent = [...new Set(steps.map((p) => p.category))].join(", ");
+  $("#sheet-mode").textContent = [...new Set(steps.map((p) => p.mode))].join(", ");
+  $("#sheet-cmd").textContent = steps.map((p, i) => `${i + 1}. ${p.label || p.tool} [${p.category}, ${fmtTarget(p.target)}]\n   ${p.command}`).join("\n\n");
+  $("#sheet-note").textContent = "Each step is still checked against scope when it runs. They run one after another.";
+  $("#sheet-run").textContent = `Approve & run all ${steps.length}`;
+  $("#sheet-run").disabled = false;
+  $("#sheet").hidden = false;
+  $("#sheet-cancel").focus();
+}
+
 function openSheet(p) {
-  pending = p;
+  pending = p; pendingBatch = null;
+  $("#sheet-run").textContent = "Approve & run";
   $("#sheet-title").textContent = p.label || p.tool;
   $("#sheet-target").textContent = fmtTarget(p.target);
   $("#sheet-cat").textContent = p.category;
@@ -544,11 +619,12 @@ function openSheet(p) {
   $("#sheet").hidden = false;
   $("#sheet-cancel").focus();
 }
-function closeSheet() { $("#sheet").hidden = true; pending = null; }
+function closeSheet() { $("#sheet").hidden = true; pending = null; pendingBatch = null; }
 $("#sheet-cancel").addEventListener("click", closeSheet);
 $("#sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") closeSheet(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("#sheet").hidden) closeSheet(); });
 $("#sheet-run").addEventListener("click", async () => {
+  if (pendingBatch) return runBatch(pendingBatch);
   const p = pending; if (!p) return;
   $("#sheet-run").disabled = true;
   try {

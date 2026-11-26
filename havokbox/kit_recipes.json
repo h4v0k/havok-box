@@ -877,7 +877,7 @@
    "risk": "probe",
    "root": false,
    "est": "5-20s",
-   "notes": "Connects to the device, so it must be on your Mine tab. sdptool is deprecated (outdated).",
+   "notes": "Connects to the device, so it must be on your Known devices list. sdptool is deprecated (outdated).",
    "source": "https://www.kali.org/tools/bluez/"
   },
   {

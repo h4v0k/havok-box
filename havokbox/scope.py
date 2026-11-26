@@ -18,7 +18,8 @@ PASSIVE = "recon.passive"
 DISCOVERY = "recon.discovery"
 # Finding the lab before an engagement exists: host discovery only (ARP / ping, no ports) on a
 # PRIVATE range no bigger than a /16 that isn't on the never list (networks.exclude). The box's own
-# connected subnets are auto-allowed (the tool re-checks the claim); a typed range needs approval.
+# connected subnets are auto-allowed (the tool re-checks the claim), as is a range inside the active
+# engagement; any other typed range needs approval.
 LOCAL = "recon.local"
 NETWORK_CATEGORIES = {"recon.active", "auth.attempt", "exploit.tool"}
 # wifi.capture: listening for one AP's handshake/PMKID. Passive on air, but it collects auth
@@ -297,6 +298,10 @@ class Gate:
             return Decision(False, False, f"{net} is on the never-touch list (networks.exclude)")
         if target.get("connected") is True:
             return Decision(True, False, f"host discovery on the box's own subnet {net}")
+        if any(net.subnet_of(e) for e in self.scope._engagement_networks() if e.version == net.version):
+            # You already picked this range when you started the engagement; a ping sweep inside it
+            # (no ports) doesn't ask again.
+            return Decision(True, False, f"host discovery (no ports) inside your engagement: {net}")
         return self._approval(LOCAL, f"host discovery (no ports) on {net}")
 
     def _approval(self, category: str, why: str) -> Decision:

@@ -35,7 +35,7 @@
     <button type="button" role="tab" data-tab="test" aria-selected="false">Test</button>
     <button type="button" role="tab" data-tab="report" aria-selected="false">Report</button>
     <button type="button" role="tab" data-tab="drive" aria-selected="false">Drive</button>
-    <button type="button" role="tab" data-tab="mine" aria-selected="false">Mine</button>
+    <button type="button" role="tab" data-tab="mine" aria-selected="false">Known</button>
     <button type="button" role="tab" data-tab="desktop" aria-selected="false" hidden>Desktop</button>
     <button type="button" role="tab" data-tab="console" aria-selected="false" hidden>Console</button>
   </nav>
@@ -47,14 +47,16 @@
       <h2>Engagement</h2>
       <div class="card" id="eng-card">
         <p id="eng-now" aria-live="polite"></p>
+        <div id="eng-sweeps"></div>
         <div id="eng-active" class="row" hidden>
           <button type="button" id="eng-end" class="btn big">End engagement</button>
         </div>
         <div id="eng-setup">
+          <div id="eng-labs"></div>
           <p class="hint">1. Find the lab. 2. Find hosts on it if you want. 3. Use it as the engagement. Scans only reach the engagement's networks, and never the never list.</p>
           <button type="button" id="eng-find" class="btn big">Find lab networks</button>
           <div id="eng-nets"></div>
-          <label for="eng-range">Or type a range (needs your approval to sweep)</label>
+          <label for="eng-range">Or type a range (sweeping it needs your approval until it's your engagement)</label>
           <input id="eng-range" class="big" inputmode="decimal" placeholder="10.20.0.0/24" autocomplete="off">
           <label for="eng-name">Engagement name</label>
           <input id="eng-name" class="big" placeholder="lab" maxlength="48" autocomplete="off">
@@ -134,8 +136,8 @@
     </section>
 
     <section id="tab-mine" hidden>
-      <h2>What's yours</h2>
-      <p class="hint">Tap <strong>Mine</strong> on any scan result to add it here, or type it below. Only things on this page can be targeted or transmitted at, and active steps still need your approval each time.</p>
+      <h2>Known devices</h2>
+      <p class="hint">Your whitelist. Tap <strong>Known</strong> on any scan result to add it, or type it below. Bluetooth probes, remote replays, Wi-Fi actions and transmitting only work on things listed here.</p>
       <div class="card" id="mine-never"></div>
       <div class="card" id="mine-wifi"></div>
       <div class="card" id="mine-ble"></div>

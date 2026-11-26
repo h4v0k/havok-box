@@ -617,12 +617,14 @@ class Handlers:
 
     def engagement_state(self) -> tuple[int, dict]:
         from . import engagement as E
-        eng = E.read(self._eng_path())
+        path = self._eng_path()
+        eng = E.read(path)
         never = [str(n) for n in self.api.scope.exclude]
+        saved = E.labs(E.labs_path(path)) if path else []
         if not eng:
-            return 200, {"status": "none", "never": never}
+            return 200, {"status": "none", "never": never, "labs": saved}
         return 200, {"status": "active", "engagement": eng, "time_left": E.time_left(eng),
-                     "never": never}
+                     "never": never, "labs": saved}
 
     # ---- "mine": things marked as yours on the dashboard (no scope-file editing) ---------
     def owned_state(self) -> tuple[int, dict]:
@@ -685,6 +687,13 @@ class Handlers:
             return 503, {"status": "error", "reason": "engagement file not configured"}
         b = body or {}
         nets = b.get("networks")
+        lab_name = self._str(b, "lab", 48)
+        if lab_name and not nets:
+            saved = E.lab(E.labs_path(path), lab_name)
+            if not saved:
+                return 404, {"status": "error", "reason": f"no saved lab called {lab_name}"}
+            nets = saved["networks"]
+            b = {**b, "name": lab_name}
         if isinstance(nets, str):
             nets = [nets]
         if not isinstance(nets, list) or not nets or len(nets) > 8:
@@ -699,6 +708,16 @@ class Handlers:
         self.api.store.log("engagement", f"started {eng['name']}: {', '.join(eng['networks'])} "
                                          f"until {time.strftime('%H:%M', time.localtime(eng['expires']))}")
         return 200, {"status": "active", "engagement": eng, "time_left": E.time_left(eng)}
+
+    def engagement_forget_lab(self, body) -> tuple[int, dict]:
+        from . import engagement as E
+        path = self._eng_path()
+        name = self._str(body or {}, "lab", 48)
+        if not path or not name:
+            return 400, {"status": "error", "reason": "lab name required"}
+        if E.forget_lab(E.labs_path(path), name):
+            self.api.store.log("engagement", f"forgot saved lab {name}")
+        return self.engagement_state()
 
     def engagement_end(self) -> tuple[int, dict]:
         from . import engagement as E
@@ -1037,6 +1056,10 @@ def create_app(handlers: Handlers | None = None):
         b = await body(request)
         return reply(await run_in_threadpool(h.owned_remove, b))
 
+    async def eng_forget(request):
+        b = await body(request)
+        return reply(await run_in_threadpool(h.engagement_forget_lab, b))
+
     async def eng_end(request):
         return reply(await run_in_threadpool(h.engagement_end))
 
@@ -1064,6 +1087,7 @@ def create_app(handlers: Handlers | None = None):
         Route("/api/engagement/networks", eng_nets),
         Route("/api/engagement/start", eng_start, methods=["POST"]),
         Route("/api/engagement/end", eng_end, methods=["POST"]),
+        Route("/api/engagement/forget-lab", eng_forget, methods=["POST"]),
         Route("/api/publish", post_publish, methods=["POST"]),
         Route("/api/wardrive/start", wd_start, methods=["POST"]),
         Route("/api/wardrive/stop", wd_stop, methods=["POST"]),

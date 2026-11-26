@@ -6,7 +6,7 @@ command here - there is no free-form command box - and every placeholder is vali
 
   {target} {host} {url}   must be inside the current engagement and off the never list
   {domain}                hostname syntax; only allowed in recipes that also query a {host}
-  {bdaddr}                MAC syntax; "probe" recipes also require it on the Mine tab
+  {bdaddr}                MAC syntax; "probe" recipes also require it on the Known devices list
   {iface} {wlan} {mon}    must be an interface that exists on the box
   {wordlist}              must be a file under the standard wordlist folders
   everything else         strict format (numbers, port lists, channel, hci, seconds, MHz)
@@ -277,7 +277,7 @@ def check_value(name: str, value: str, ctx: Context, risk: str = "discovery") ->
         if not re.fullmatch(r"([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}", v):
             raise KitError("Bluetooth address must look like AA:BB:CC:DD:EE:FF")
         if risk == "probe" and v.lower() not in {b.lower() for b in ctx.scope.ble}:
-            raise KitError(f"{v} isn't on the Mine tab; mark the device as yours before probing it")
+            raise KitError(f"{v} isn't on the Known devices list; add it there before probing it")
         return v.upper()
     if name == "hci":
         if not re.fullmatch(r"hci\d", v):

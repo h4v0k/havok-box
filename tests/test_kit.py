@@ -122,7 +122,7 @@ def test_good_values_and_hostname_url_in_scope():
 
 
 def test_probe_bluetooth_needs_mine():
-    with pytest.raises(kit.KitError, match="Mine"):
+    with pytest.raises(kit.KitError, match="Known devices"):
         kit.check_value("bdaddr", "11:22:33:44:55:66", ctx(), "probe")
     assert kit.check_value("bdaddr", "11:22:33:44:55:66", ctx(), "discovery")
 

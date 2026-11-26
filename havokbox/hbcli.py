@@ -336,10 +336,29 @@ def cmd_engage(a) -> int:
     if a.action == "end":
         print("engagement ended" if E.end(path) else "no engagement was running")
         return 0
+    if a.action == "labs":
+        saved = E.labs(E.labs_path(path))
+        for x in saved:
+            print(f"{x['name']:<20} {', '.join(x['networks'])}")
+        if not saved:
+            print("no saved labs yet; every engagement you start is saved by name")
+        return 0
+    if a.action == "forget":
+        if not a.lab:
+            raise ScopeError("which lab? hb engage forget --lab <name>")
+        print("forgotten" if E.forget_lab(E.labs_path(path), a.lab) else f"no saved lab called {a.lab}")
+        return 0
     if a.action == "start":
-        if not a.networks:
-            raise ScopeError("give the lab range(s): hb engage start 10.20.0.0/24 --name lab-a")
-        eng = E.start(path, a.name, a.networks, _never(a.scope), hours=a.hours, by="hb")
+        name, nets = a.name, a.networks
+        if a.lab and not nets:
+            saved = E.lab(E.labs_path(path), a.lab)
+            if not saved:
+                raise ScopeError(f"no saved lab called {a.lab}; see: hb engage labs")
+            name, nets = a.lab, saved["networks"]
+        if not nets:
+            raise ScopeError("give the lab range(s): hb engage start 10.20.0.0/24 --name lab-a  "
+                             "(or a saved one: hb engage start --lab <name>)")
+        eng = E.start(path, name, nets, _never(a.scope), hours=a.hours, by="hb")
         print(f"engagement {eng['name']}: {', '.join(eng['networks'])} for {E.time_left(eng)}")
         return 0
     eng = E.read(path)
@@ -425,6 +444,14 @@ def cmd_find(a, runner=None, ask=input, interactive: bool | None = None) -> int:
         for r in rows:
             note = "usable" if r["usable"] else f"can't use: {r['why_not']}"
             print(f"{r['network']:<18} on {r['iface']:<8} box is {r['box_ip']:<15} {note}")
+        from . import engagement as E
+        eng = E.read(engagement_path())
+        if eng:
+            print(f"\nengagement {eng['name']}: {', '.join(eng['networks'])} ({E.time_left(eng)} left)")
+        saved = E.labs(E.labs_path(engagement_path()))
+        if saved:
+            print("saved labs: " + "; ".join(f"{x['name']} ({', '.join(x['networks'])})" for x in saved[:5]))
+            print("restart one: hb engage start --lab <name>")
         print("\nnext: hb find <network>   then   hb engage start <network> --name <lab>")
         return 0
     try:
@@ -432,6 +459,8 @@ def cmd_find(a, runner=None, ask=input, interactive: bool | None = None) -> int:
     except EngagementError as e:
         raise ScopeError(str(e))
     target = ipaddress.ip_network(netw)
+    in_eng = any(target.subnet_of(e) for e in load_scope(a.scope)._engagement_networks()
+                 if e.version == target.version)
     hit = next((x for x in addrs if target.subnet_of(ipaddress.ip_network(x["network"]))), None)
     overlaps_never = any(target.overlaps(n) for n in never if n.version == target.version)
     if hit and not overlaps_never:   # arp-scan can't skip addresses, so never-list overlap -> nmap
@@ -439,9 +468,9 @@ def cmd_find(a, runner=None, ask=input, interactive: bool | None = None) -> int:
         if os.geteuid() != 0:
             cmd = ["sudo"] + cmd
     else:
-        if not hit and not (sys.stdin.isatty() if interactive is None else interactive):
+        if not hit and not in_eng and not (sys.stdin.isatty() if interactive is None else interactive):
             raise ScopeError(f"{netw} isn't attached to the box; run this yourself to confirm the sweep")
-        if not hit and ask(f"{netw} isn't attached to the box. Ping-sweep it (no ports)? type yes: ").strip() != "yes":
+        if not hit and not in_eng and ask(f"{netw} isn't attached to the box. Ping-sweep it (no ports)? type yes: ").strip() != "yes":
             print("cancelled")
             return 1
         cmd = ["nmap", "-sn", "-n"]
@@ -508,9 +537,10 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("-n", "--dry-run", action="store_true", help="print the command, don't run it")
     k.add_argument("--confirm", help='type "yes" to run a default-login check without the prompt')
     e = sub.add_parser("engage", help="show, start or end the engagement (the lab ranges in scope)")
-    e.add_argument("action", nargs="?", default="status", choices=["status", "start", "end"])
+    e.add_argument("action", nargs="?", default="status", choices=["status", "start", "end", "labs", "forget"])
     e.add_argument("networks", nargs="*")
     e.add_argument("--name", default="lab")
+    e.add_argument("--lab", help="a saved lab's name (see: hb engage labs)")
     e.add_argument("--hours", type=float, default=12)
     fd = sub.add_parser("find", help="which networks is the box on? / who's up on one (no ports)")
     fd.add_argument("network", nargs="?")

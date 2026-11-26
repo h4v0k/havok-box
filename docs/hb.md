@@ -15,16 +15,31 @@ Lab IPs change, so the scope is per engagement rather than fixed:
 1. **Find the lab.** `hb find` lists the networks the box is plugged into or joined (read from its
    own interfaces, nothing is sent), marking any that are public, bigger than a /16 or on the never
    list. `hb find 10.20.0.0/24` then shows who's up there (ARP sweep, no ports). A range the box
-   isn't attached to gets a ping sweep, and `hb` asks you to type `yes` first.
+   isn't attached to gets a ping sweep, and `hb` asks you to type `yes` first, unless that range
+   is inside your active engagement (you already picked it).
 2. **Pick it.** `hb engage start 10.20.0.0/24 --name lab-a` makes it the engagement for 12 hours
    (`--hours` up to 72). Ranges must be private, no bigger than a /16, and off the never list.
 3. **Carry on.** `hb scan`, `hb flow` and the dashboard now reach only that range. Scan folders get
    an `engagement.txt` with the name. `hb engage` shows the time left. `hb engage end` stops it,
    and so does the clock: when it expires, lab scans are refused again.
+4. **Next time.** Every engagement is saved by name. `hb engage labs` lists them,
+   `hb engage start --lab lab-a` starts one again (re-checked against the never list), and
+   `hb engage forget --lab lab-a` drops it. On the dashboard they're under **Your saved labs**
+   with **Start again**.
 
 The menus (`hb`, `hb gui`) have this as the first item, **Engagement: find and pick the lab**. On
 the dashboard, it's the **Engagement** card at the top of Recon: **Find lab networks**, then
-**Find hosts** or **Use as engagement**.
+**Find hosts** or **Use as engagement**. While an engagement runs, the card has a **Find hosts**
+button for each of its ranges; those sweeps (ping only, no ports) don't ask for approval.
+
+**Approve all steps.** When a finding has two or more steps waiting for approval, its card shows
+**Approve all N steps**. The sheet lists every exact command; one tap approves and queues them,
+and each one is still digest- and scope-checked when it runs. Default-login tries, Wi-Fi attacks,
+transmitting and your own recipes are left out and keep their own approval sheet each time.
+
+**Known devices** (the tab that used to be called Mine) is your whitelist: tap **Known** on a scan
+result to add it. Bluetooth probes, remote replays, Wi-Fi actions and transmitting only work on
+things listed there.
 
 Unlike the dashboard buttons, `hb` does **not** ask for approval. You're at the keyboard, the same
 as in the Console.
@@ -198,5 +213,5 @@ step-by-step chains such as **New network triage**, **Windows host enum**, **Web
 Rules it enforces: there's no free-form command box; every blank is checked. Network targets must be
 in the engagement and off the never list (nmap gets `--exclude`, and tools that can't skip addresses
 refuse ranges that contain never-list hosts). Bluetooth recipes that connect to a device need it on
-the Mine tab. Exploitation, credential attacks, poisoning, deauth and RF transmit aren't in the
+the Known devices tab. Exploitation, credential attacks, poisoning, deauth and RF transmit aren't in the
 catalog, and the tests fail if one is added. Recipes are in `havokbox/kit_recipes.json`.

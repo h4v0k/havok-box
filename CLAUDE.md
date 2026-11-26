@@ -11,8 +11,10 @@ owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone das
 - **Lab only.** Targets are only the active engagement's ranges (`hb engage` shows them; they
   expire after 12 h by default), and never anything on the never list (`networks.exclude` in
   `config/scope.yaml`). Never scan, probe or transmit at anything else. Don't start, extend or end
-  an engagement and don't edit the scope file: the owner does that (`hb engage start`, dashboard).
-  `hb find` (which networks is the box on) is fine; sweeping a range with `hb find <cidr>` asks first.
+  an engagement, restart or forget a saved lab, or edit the scope file: the owner does that
+  (`hb engage start`, `hb engage start --lab`, dashboard).
+  `hb find` (which networks is the box on) is fine; ask the owner before sweeping a range with
+  `hb find <cidr>`, even inside the engagement (where `hb` itself no longer asks).
 - **Standard tools only.** Orchestrate installed Kali tools. Don't write exploits, payloads or
   malware, and don't automate exploitation.
 - **Use the gated paths.** For network scans, prefer `hb` (it checks scope and skips excludes)
@@ -20,9 +22,9 @@ owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone das
   through the dashboard, where it needs the owner's per-action approval. Don't start those from a
   shell.
 - **Receive is fine, transmit isn't (from here).** The SDRs only listen. Yard Stick replay exists,
-  but only from the dashboard, for remotes the owner marked as his on the **Mine** tab, on a
+  but only from the dashboard, for remotes the owner marked as his on the **Known devices** tab, on a
   frequency listed there, with his approval each time. Never run rfcat transmit, aireplay-ng, mdk4
-  or similar from a shell, and don't add or remove anything on the Mine tab or in
+  or similar from a shell, and don't add or remove anything on the Known devices tab or in
   `/data/havokbox/owned.json`. The one exception is the Meshtastic bridge, which messages
   the owner's own node. Keep its replies report-only.
 - **Don't touch secrets.** Leave `/etc/havokbox/`, `/data/havokbox/secrets/`, `config/box.json` and
@@ -33,7 +35,7 @@ owner's phone; see `docs/mesh.md`). The owner (havok) drives it from a phone das
 ## Useful commands on the box
 
 - `hb kit list` / `hb kit show <id>`: the command toolbox catalog (running a recipe asks first).
-- `hb engage`: the current engagement and time left. `hb find`: networks the box is on.
+- `hb engage`: the current engagement and time left. `hb engage labs`: saved labs (read-only). `hb find`: networks the box is on.
 - `hb`: menus. `hb hw`: is every board working? `hb profiles`, `hb scan <ip/cidr> -p quiet|standard|robust`,
   `hb hosts [--port N]`, `hb ports`, `hb flow <cidr>`, `hb diff old.xml new.xml`.
   Scans are saved in `/data/havokbox/scans/`.

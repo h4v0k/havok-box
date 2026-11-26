@@ -12,6 +12,7 @@
       "Bash(python3 -m pytest *)",
       "Bash(hb engage)",
       "Bash(hb engage status)",
+      "Bash(hb engage labs)",
       "Bash(hb find)",
       "Bash(hb kit list)",
       "Bash(hb kit show *)"
@@ -45,6 +46,10 @@
       "Edit(//data/havokbox/engagement.json)",
       "Write(//data/havokbox/engagement.json)",
       "Bash(*engagement.json*)",
+      "Edit(//data/havokbox/labs.json)",
+      "Write(//data/havokbox/labs.json)",
+      "Bash(*labs.json*)",
+      "Bash(hb engage forget*)",
       "Write(/config/scope.yaml)",
       "Edit(//data/havokbox/owned.json)",
       "Write(//data/havokbox/owned.json)",

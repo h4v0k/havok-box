@@ -395,6 +395,7 @@ class Api:
                 "suggested": bool(t.get("suggested")) and runnable,
                 "needs_approval": decision.needs_approval or not decision.allowed or self._is_recipe(t.get("tool")),
                 "approved": self.store.open_approval(t.get("id")) is not None,
+                "recipe": self._is_recipe(t.get("tool")),
                 "command": command_for(t, self.scope, self.registry, self.orch.hw),
                 "digest": task_digest(t, argv),
                 "runnable": runnable,

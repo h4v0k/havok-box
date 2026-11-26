@@ -83,7 +83,7 @@ HELP = {
     "sdr.survey": "Sweeps the radio spectrum and shows which frequencies are active.",
     "sdr.decode": "Decodes weather stations, tire sensors, door sensors and similar devices on that frequency.",
     "subghz.scan": "Listens for garage remotes, key fobs and other low-frequency devices and saves what it hears.",
-    "subghz.replay": "Transmits a saved remote signal once. Only for remotes on your Mine tab.",
+    "subghz.replay": "Transmits a saved remote signal once. Only for remotes on your Known devices list.",
     "marauder.scan": "Surveys Wi-Fi with the ESP32 add-on board.",
     "marauder.deauth": "Sends disconnect messages from the ESP32 board. Only for your own Wi-Fi.",
     "air.adsb": "Shows aircraft broadcasting their position, received on the SDR.",

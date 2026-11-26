@@ -216,3 +216,102 @@ def test_scope_yaml_slips_get_plain_errors():
         Scope({"networks": {"exclude": ["home"]}})
     with pytest.raises(ValueError, match="must be a list"):
         Scope({"networks": {"exclude": "192.168.1.0/24"}})
+
+
+# ---------------------------------------------------------------- saved labs
+
+def test_labs_saved_on_start_and_forgotten(tmp_path):
+    clock = Clock()
+    p = str(tmp_path / "e.json")
+    E.start(p, "lab-a", ["10.20.0.0/24"], NEVER, clock=clock)
+    clock.t += 10
+    E.start(p, "lab-b", ["10.30.0.0/24"], NEVER, clock=clock)
+    saved = E.labs(E.labs_path(p))
+    assert [x["name"] for x in saved] == ["lab-b", "lab-a"]          # most recent first
+    assert E.lab(E.labs_path(p), "lab-a")["networks"] == ["10.20.0.0/24"]
+    assert E.forget_lab(E.labs_path(p), "lab-a") and not E.forget_lab(E.labs_path(p), "lab-a")
+    assert [x["name"] for x in E.labs(E.labs_path(p))] == ["lab-b"]
+
+
+def test_labs_cap_and_bad_file(tmp_path):
+    clock = Clock()
+    lp = str(tmp_path / "labs.json")
+    for i in range(E.MAX_LABS + 5):
+        clock.t += 1
+        E.save_lab(lp, f"lab{i}", ["10.20.0.0/24"], clock=clock)
+    assert len(E.labs(lp)) == E.MAX_LABS and E.labs(lp)[0]["name"] == f"lab{E.MAX_LABS + 4}"
+    (tmp_path / "labs.json").write_text("not json")
+    assert E.labs(lp) == []
+    (tmp_path / "labs.json").write_text(json.dumps({"bad name!": {"networks": ["10.0.0.0/24"]},
+                                                     "ok": {"networks": "nope"}}))
+    assert E.labs(lp) == []
+
+
+def test_saved_lab_rechecked_against_never_on_restart(tmp_path):
+    lp = str(tmp_path / "labs.json")
+    E.save_lab(lp, "home", ["192.168.1.0/24"])        # e.g. hand-edited; now on the never list
+    with pytest.raises(E.EngagementError, match="never"):
+        E.start(str(tmp_path / "engagement.json"), "home", E.lab(lp, "home")["networks"], NEVER)
+
+
+def test_gate_local_inside_engagement_skips_approval(tmp_path):
+    clock = Clock()
+    sc = scope_with(tmp_path, clock)
+    g = Gate(sc)
+    assert g.evaluate(_task({"network": "10.20.0.0/24"})).needs_approval
+    E.start(sc.engagement_path, "lab-a", ["10.20.0.0/24"], NEVER, clock=clock)
+    d = g.evaluate(_task({"network": "10.20.0.0/25"}))
+    assert d.allowed and not d.needs_approval
+    assert g.evaluate(_task({"network": "10.30.0.0/24"})).needs_approval    # other ranges still ask
+    clock.t += 13 * 3600                                                      # expired
+    assert g.evaluate(_task({"network": "10.20.0.0/24"})).needs_approval
+
+
+def test_hb_engage_labs_and_restart(tmp_path, monkeypatch, capsys):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("networks:\n  include: []\n  exclude: [192.168.1.0/24]\n")
+    monkeypatch.setenv("HB_ENGAGEMENT", str(tmp_path / "eng.json"))
+    base = ["--scope", str(scope), "engage"]
+    assert hbcli.main(base + ["labs"]) == 0
+    assert hbcli.main(base + ["start", "10.20.0.0/24", "--name", "lab-a"]) == 0
+    assert hbcli.main(base + ["end"]) == 0
+    assert hbcli.main(base + ["start", "--lab", "nope"]) == 2
+    assert hbcli.main(base + ["start", "--lab", "lab-a"]) == 0
+    assert hbcli.main(["--scope", str(scope), "scan", "10.20.0.9", "-n"]) == 0
+    capsys.readouterr()
+    assert hbcli.main(base + ["labs"]) == 0 and "lab-a" in capsys.readouterr().out
+    assert hbcli.main(base + ["forget", "--lab", "lab-a"]) == 0
+    capsys.readouterr()
+    hbcli.main(base + ["labs"])
+    assert "no saved labs" in capsys.readouterr().out
+
+
+def test_hb_find_inside_engagement_skips_typed_yes(tmp_path, monkeypatch, capsys):
+    scope = tmp_path / "scope.yaml"
+    scope.write_text("networks:\n  include: []\n  exclude: [192.168.1.0/24]\n")
+    monkeypatch.setenv("HB_ENGAGEMENT", str(tmp_path / "eng.json"))
+    monkeypatch.setattr(hbcli, "_ip_json", lambda argv: IP_ADDR)
+    asked = []
+    import argparse
+    a = argparse.Namespace(scope=str(scope), network="10.40.0.0/24", dry_run=True)
+    with pytest.raises(hbcli.ScopeError):
+        hbcli.cmd_find(a, ask=lambda q: asked.append(q) or "no", interactive=False)
+    hbcli.main(["--scope", str(scope), "engage", "start", "10.40.0.0/24", "--name", "far"])
+    assert hbcli.cmd_find(a, ask=lambda q: asked.append(q) or "no", interactive=False) == 0
+    assert not asked and "nmap" in capsys.readouterr().err
+
+
+def test_dashboard_saved_labs(tmp_path):
+    from tests.helpers import make
+    h = make()[0]
+    h.api.scope.engagement_path = str(tmp_path / "eng.json")
+    h.api.scope.exclude = list(NEVER)
+    assert h.engagement_start({"name": "lab-a", "networks": ["10.20.0.0/24"]})[0] == 200
+    h.engagement_end()
+    st = h.engagement_state()[1]
+    assert st["status"] == "none" and st["labs"][0]["name"] == "lab-a"
+    assert h.engagement_start({"lab": "nope"})[0] == 404
+    code, r = h.engagement_start({"lab": "lab-a", "hours": 2})
+    assert code == 200 and r["engagement"]["networks"] == ["10.20.0.0/24"]
+    assert h.engagement_forget_lab({"lab": "lab-a"})[1]["labs"] == []
+    assert h.engagement_forget_lab({})[0] == 400

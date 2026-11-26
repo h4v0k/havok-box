@@ -73,6 +73,7 @@ class ManualToolTest(unittest.TestCase):
         self.assertTrue(r[1]["needs_approval"])
         p = [p for p in h.state()[1]["proposals"] if p["tool"] == "nuclei.scan"][0]
         self.assertTrue(p["needs_approval"] and p["runnable"])
+        self.assertFalse(p["recipe"])
         store.close()
 
     def test_out_of_scope_refused(self):
@@ -172,6 +173,7 @@ class RecipeApprovalFixTest(unittest.TestCase):
         self.assertEqual(r[0], 200)
         p = [p for p in h.state()[1]["proposals"] if p["tool"] == "recipe.sneaky"][0]
         self.assertTrue(p["needs_approval"])       # ...but it still needs approval
+        self.assertTrue(p["recipe"])               # flagged so "approve all" leaves it out
         # and running it without approval is refused
         self.assertEqual(h.api.run(p["task_id"])["status"], "awaiting_approval")
         # and it is refused outright during a drive

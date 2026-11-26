@@ -13,6 +13,11 @@ engagement can't override it. Its networks.include, if any, still applies (fixed
 
 Limits on what an engagement may hold: private (RFC 1918 / ULA) ranges only unless allow_public is
 set explicitly; nothing larger than a /16; a network entirely inside the never list is refused.
+Saved labs: every engagement you start is remembered by name in labs.json next to the engagement
+file, so next time it's one tap (dashboard) or `hb engage start --lab <name>`. A saved lab is only a
+shortcut: starting it re-checks the networks against the never list and the limits above, and
+nothing is in scope until you start it.
+
 Only the dashboard (token) and the owner's shell (`hb engage`) write the file; Claude Code is
 denied both in .claude/settings.json.
 """
@@ -76,7 +81,55 @@ def start(path: str, name: str, networks, never, hours: float = DEFAULT_HOURS, s
     data = {"name": name, "networks": nets, "ssids": ssids, "allow_public": bool(allow_public),
             "started": now, "expires": now + hours * 3600, "by": by}
     _write(path, data)
+    try:
+        save_lab(labs_path(path), name, nets, clock=clock)
+    except OSError:
+        pass   # remembering is a convenience; never block the engagement on it
     return data
+
+
+MAX_LABS = 20
+
+
+def labs_path(eng_path: str) -> str:
+    return os.path.join(os.path.dirname(eng_path) or ".", "labs.json")
+
+
+def labs(path: str | None) -> list[dict]:
+    """Saved labs, most recently used first. Unreadable or malformed -> empty."""
+    if not path:
+        return []
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for name, v in (data.items() if isinstance(data, dict) else []):
+        if NAME_RE.match(str(name)) and isinstance(v, dict) and isinstance(v.get("networks"), list):
+            out.append({"name": name, "networks": [str(n) for n in v["networks"]][:8],
+                        "last_used": float(v.get("last_used") or 0)})
+    return sorted(out, key=lambda x: -x["last_used"])
+
+
+def save_lab(path: str, name: str, networks, clock=time.time) -> None:
+    keep = {x["name"]: {"networks": x["networks"], "last_used": x["last_used"]} for x in labs(path)}
+    keep[name] = {"networks": list(networks), "last_used": clock()}
+    newest = sorted(keep.items(), key=lambda kv: -kv[1]["last_used"])[:MAX_LABS]
+    _write(path, dict(newest))
+
+
+def forget_lab(path: str, name: str) -> bool:
+    keep = {x["name"]: {"networks": x["networks"], "last_used": x["last_used"]} for x in labs(path)}
+    if name not in keep:
+        return False
+    del keep[name]
+    _write(path, keep)
+    return True
+
+
+def lab(path: str, name: str) -> dict | None:
+    return next((x for x in labs(path) if x["name"] == name), None)
 
 
 def end(path: str) -> bool:
